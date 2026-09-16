@@ -411,6 +411,49 @@ stripes. **That alignment is worth +4.0 points of hit and 38% of the activations
 int8 the same 16 KB is 128 tokens. **"One row-stripe per head" is the portable statement**;
 "page 64" is what it means for this model on this memory.
 
+### Head-major, the other end of the axis
+
+Worth its own treatment, because it is the fastest layout measured and the one whose
+behaviour is least intuitive. Each head owns a contiguous slice of the whole pool:
+
+```c
+off = head * n_blocks * B * _dk  +  phys * B * _dk  +  (seq_idx % B) * _dk + d;
+      └──────── head's region ───┘   └─ allocator's block within it ─┘
+```
+
+Reduced to the chunk index that selects a bank and row:
+
+```
+chunk = head × n_blocks + phys        bank = chunk mod 32     row = chunk / 32
+```
+
+Two consequences follow, and they pull in opposite directions.
+
+**Every row holds one head, at any page size.** A head owns a contiguous region, so every
+row inside it belongs to that head alone whatever the page size. This is why page size is
+inert here: 70.0% at page 16 against 70.7% at page 64, a 0.7-point move over a 4× range,
+where the same knob is worth 10 points to block-major.
+
+**Consecutive chunks land in consecutive banks.** `chunk` increments by one every 16 KB, so
+the stream *hops*: a head walking its own context sweeps bank after bank rather than
+staying put. Measured, one core touches **19.99 banks** against headbank's 1.03, and 28.4
+are live per channel against 2.8.
+
+That hopping is the whole story of its performance. A bank mid-row-switch delivers nothing,
+but head-major always has two dozen others holding open rows, so the switches overlap and
+the bus never waits: **98.3% while-busy, the fastest layout at 1.36× the paged baseline.**
+Its individual banks are the *least* efficient of any layout, delivering 3.3 reads before
+switching; it wins on volume alone.
+
+The same property is why its locality is the worst measured. `bank = (head × n_blocks +
+phys) mod 32` depends on `phys`, the allocator's choice, so a head's banks are scattered
+rather than owned, and the dozen concurrently active heads roam the same 32 banks and close
+one another's rows. **69.9% hit, 9.7 activations per row of data, 1,935,917 KV activations
+— 4.6× headbank's.**
+
+Head-major is therefore the right choice when latency is the objective and DRAM activation
+energy is not, and it is the layout to beat on bandwidth rather than on locality.
+
 ## 9. Headbank — the head index on the bank field
 
 ### 10.1 The address map
