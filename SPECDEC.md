@@ -1,5 +1,10 @@
 # Speculative decoding on ONNXim — cycle-level closed loop + open-loop trace generator
 
+> **Note on figures.** The speculative runs in this document predate the operand-tagged
+> stream split, so their row-buffer percentages fold activation traffic into KV and should
+> not be compared against `KV_PLACEMENT.md`. The address-count validation is unaffected,
+> since that defect changes stream classification rather than addresses.
+
 Scope: vLLM-style speculative decoding (draft model + target verify) for
 LLaMA-2 7B, HBM3 16ch, the `_multi_16x32` NPU (16 cores x 32x32), head-parallel
 attention, head-major paged KV (block 16), tile-major weights, sequential

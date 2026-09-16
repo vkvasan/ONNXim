@@ -12,3 +12,8 @@ traces/compact/
 traces/azure/
 *.csv.gz
 scripts/run_ko2.sh
+FINDINGS.md
+FINDINGS_v2.md
+*.md.prev
+jobs_*.txt
+DRAM_TRACING.md
