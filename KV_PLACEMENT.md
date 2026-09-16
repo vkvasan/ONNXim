@@ -208,7 +208,10 @@ step, traffic with no analogue in plain decode.
 It runs under the same single-layer approximation as §1, applied to both models
 (`_num_sim_layers` for the target, `_draft_sim_layers` for the draft). What is faithful is
 the *sequence of accesses* a speculative step produces, not the depth of the network
-producing them. A full 32-layer speculative run is out of reach for the same reason plain
+producing them. **Acceptance is an input, not a result**: with no logits and one layer,
+whether a draft token would be accepted cannot be derived, so it is sampled from a geometric
+with `spec_alpha` or replayed from a file. The simulation is closed over KV bookkeeping,
+not over model output. A full 32-layer speculative run is out of reach for the same reason plain
 decode is: the cycle-level loop already costs 35–45 minutes per verify step at one layer.
 
 Both vLLM scorers are modelled, and they differ by an order of magnitude in KV traffic:

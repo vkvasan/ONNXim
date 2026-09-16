@@ -1,4 +1,13 @@
-# Speculative decoding on ONNXim — cycle-level closed loop + open-loop trace generator
+# Speculative decoding on ONNXim: cycle-level simulation + an analytic trace generator
+
+> **What is and is not simulated.** The memory traffic and timing of each draft and verify
+> pass are simulated cycle by cycle through Ramulator2, and KV state (lookahead rows, stale
+> rows overwritten on rollback) carries across steps. **Acceptance is not derived from the
+> model.** ONNXim computes no logits, and runs a single transformer layer, so whether a
+> draft token would be accepted is supplied as an input: sampled from a geometric with
+> `spec_alpha`, or replayed from an `accept_file`. The loop is closed over KV bookkeeping,
+> not over model output. Replaying from a file is what makes the cycle-level simulation and
+> the analytic generator directly comparable, since both then see identical acceptance.
 
 > **Note on figures.** The speculative runs in this document predate the operand-tagged
 > stream split, so their row-buffer percentages fold activation traffic into KV and should
@@ -14,7 +23,7 @@ Two tools, one model of the step:
 
 | tool | what it gives | cost |
 |---|---|---|
-| `scheduler: "specdec"` in ONNXim (`src/scheduler/SpecDecScheduler.*`) | cycle-level closed loop: draft x k, verify, acceptance, KV rollback, real arrival cycles, Ramulator2 row hit / BW | ~35-45 min per verify step of 4-8 requests, 1 layer |
+| `scheduler: "specdec"` in ONNXim (`src/scheduler/SpecDecScheduler.*`) | cycle-level: draft x k, verify, KV rollback, real arrival cycles, Ramulator2 row hit / BW | ~35-45 min per verify step of 4-8 requests, 1 layer |
 | `scripts/specdec_trace.py` | open-loop DRAM address stream of the same step sequence, per-phase counts, write-after-write, plain-decode reference | seconds |
 | `scripts/specdec_analyze.py` | splits an ONNXim DRAM trace into (phase, stream, R/W), row hit per stream, WAW, and diffs it against the generator | minutes |
 
