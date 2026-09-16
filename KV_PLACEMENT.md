@@ -173,7 +173,7 @@ Three properties matter:
   *same* physical layout, as a real server would, since the allocator is global.
 - **Scattered.** Logical block *n* is not physical block *n*, so a head's data is spread
   across the pool. This is what makes fragmentation a measured effect rather than an assumed
-  one, and it is the reason page size turns out to be the largest single lever (§11): at 16
+  one, and it is the reason page size turns out to be the largest single lever (§12): at 16
   tokens a DRAM row-stripe holds four independently-placed pages.
 - **Reproducible.** Fixed seed, so two runs differing only in layout are comparable.
 
@@ -398,7 +398,7 @@ field so a head's consecutive rows land in consecutive **banks** (it hops).
 **Where block-major meets headbank.** At page 64 the block-major expression becomes
 `chunk = phys × 32 + head`, and `phys × 32 ≡ 0 (mod 32)`, so the bank field reduces to
 `head`: the same function headbank K=1 computes at page 64. The two differ only in that
-headbank pads the tensor base to 512 KB (§9.3).
+headbank pads the tensor base to 512 KB (§10.3).
 
 Measured on the same build, the two issue an **identical** number of accesses (6,410,112
 each): the same footprint, but do not reach the same hit rate: **89.5% against 93.5%**.
@@ -411,10 +411,10 @@ stripes. **That alignment is worth +4.0 points of hit and 38% of the activations
 int8 the same 16 KB is 128 tokens. **"One row-stripe per head" is the portable statement**;
 "page 64" is what it means for this model on this memory.
 
-### Head-major, the other end of the axis
+## 9. Head-major — each head contiguous over the pool
 
-Worth its own treatment, because it is the fastest layout measured and the one whose
-behaviour is least intuitive. Each head owns a contiguous slice of the whole pool:
+The fastest layout measured, and the one whose behaviour is least intuitive. Each head owns
+a contiguous slice of the whole pool:
 
 ```c
 off = head * n_blocks * B * _dk  +  phys * B * _dk  +  (seq_idx % B) * _dk + d;
@@ -454,7 +454,7 @@ one another's rows. **69.9% hit, 9.7 activations per row of data, 1,935,917 KV a
 Head-major is therefore the right choice when latency is the objective and DRAM activation
 energy is not, and it is the layout to beat on bandwidth rather than on locality.
 
-## 9. Headbank — the head index on the bank field
+## 10. Headbank — the head index on the bank field
 
 ### 10.1 The address map
 
@@ -574,7 +574,7 @@ verifiable by fitting the trace's decoded `bank`/`row` columns against its `addr
 column, which is how the constants above were confirmed.
 
 # Part III — Results
-## 10. The placement comparison
+## 11. The placement comparison
 
 | placement | KV hit | miss | confl | rd/visit | KV ACT | cycles | while-busy | vs baseline |
 |---|---|---|---|---|---|---|---|---|
@@ -632,7 +632,7 @@ cannot see how many of them are concurrent. That gap is the subject of §13.
 - **K=1 pg64 + V16**, best joint point: 90.3% hit *and* 82.5% bandwidth, 1.18× faster.
 - **K=2 + V16 + pg64**, best time among isolated placements, 94.4% bandwidth, 1.33×.
 
-## 11. Page size
+## 12. Page size
 
 For **headbank**, page size is the strongest single lever (Appendix D): 91.9 → 93.5% hit,
 12.5 → 15.4 reads/visit, −19% activations, −7% runtime, and it saturates at 64.
@@ -653,7 +653,7 @@ lacks is the stripe-aligned base, worth a further 3.8 points (§8). For anyone r
 paged KV cache, changing the page size is the cheapest available move and captures most of
 the benefit.
 
-## 12. Core count
+## 13. Core count
 
 | configuration | block | head-major | K=1 | K=2 |
 |---|---|---|---|---|
@@ -678,7 +678,7 @@ both ways) but not iso-compute: 4 × 128×128 has 4× the PEs.
 **Practical reading: this placement work pays on wide-array machines and not on
 many-narrow-core ones.**
 
-## 13. The bandwidth/locality trade
+## 14. The bandwidth/locality trade
 
 Every mechanism tried to raise bank-level parallelism bought bandwidth and paid in run
 length. Measured bank counts (2,000-cycle windows, channel 0, KV only):
@@ -725,7 +725,7 @@ hit with ~92% bandwidth. A close-by-cause audit — attributing every KV miss to
 demand precharge, or refresh, and flagging same-row-came-back — is the measurement that
 decides it.
 
-## 14. Two controller defects, both null
+## 15. Two controller defects, both null
 
 Two genuine controller bugs were found and fixed. Neither changes any result, which is
 worth recording precisely because the instinct is to assume they would.
@@ -774,14 +774,14 @@ conflicts, which is the most locality of any layout left on the table. If reorde
 the constraint, the gain would scale with how much was available to recover. It does not.
 
 That is a claim about *creating* locality. Preserving it is a separate matter, and there the
-controller is currently failing at something it could do (§15).
+controller is currently failing at something it could do (§16).
 
-## 15. What closes a bank: the stranded-request audit
+## 16. What closes a bank: the stranded-request audit
 
 Three separate observations shared one fingerprint — K=1 → K=2, 4 → 16 cores, and
 headbank's residual opens/row. In each, **conflicts are unchanged** (isolation never
 breaks) and the entire loss is *misses*, i.e. banks found with no row open. Refresh is
-excluded (§14) and eviction is excluded by the flat conflict rate. So something else
+excluded (§15) and eviction is excluded by the flat conflict rate. So something else
 closes them.
 
 The controller was instrumented to attribute every KV miss to what closed the bank,
@@ -797,7 +797,7 @@ operand responsible. Result:
 about `tRP`. Each instance costs a `PRE`+`ACT` round trip, 46 cycles, to restore data that
 was sitting in the sense amplifiers when it was discarded. K=2 does this 750,188 times.
 
-The cause is in the scheduler, and it is the same defect as §14: with no row-hit tier,
+The cause is in the scheduler, and it is the same defect as §15: with no row-hit tier,
 `check_ready()` returns true for a request needing `PRE` *and* for one able to read the
 open row, so the tie falls through to arrival order. An older request wanting a different
 row outranks younger requests that could read right now, and serving it throws their row
@@ -823,7 +823,7 @@ matter because others are delivering. This also explains `RAMULATOR_SCHED_BANKPR
 which closed the gap to 28.5 cycles and ran 3.2% *slower*: it optimised a quantity that
 does not affect throughput. **Switch duration is irrelevant; switch count is not.**
 
-Why this matters for the trade in §13: reads-per-visit appears in both metrics —
+Why this matters for the trade in §14: reads-per-visit appears in both metrics —
 
 ```
 hit rate   opens/row = 32 / reads_per_visit
@@ -838,7 +838,7 @@ implemented (`RAMULATOR_SCHED_KEEPOPEN`) and not yet measured.
 
 # Part IV — Future work
 
-## 16. Across the stack
+## 17. Across the stack
 
 The measurements place a value on each layer's decisions, and they are not evenly
 distributed:
@@ -858,7 +858,7 @@ Meanwhile a serving-layer configuration change that nobody thinks of as a memory
 worth ten points.
 
 The corollary is the more useful direction: **good placement is what makes downstream
-problems visible.** The 750,188 stranded requests of §15 were always present: they only
+problems visible.** The 750,188 stranded requests of §16 were always present: they only
 became measurable once isolation removed the eviction noise, because conflicts stopped
 moving and every remaining loss had to be explained by something else. Bad placement hides
 controller defects behind its own noise.
@@ -871,12 +871,12 @@ Work that follows from this:
    concurrently costs no isolation by construction: they are already in separate banks and
    cannot evict one another. Untested, and the only remaining route to high locality and
    high bandwidth at once.
-2. **The stranded-request guard** (§15), which would raise reads-per-visit and therefore
+2. **The stranded-request guard** (§16), which would raise reads-per-visit and therefore
    both metrics from one cause.
 3. **Half of every row is unaddressed**: the device declares 2 KB rows and the mapping
    reaches 1 KB. If unintentional, the ceiling on reads-per-visit is 64 rather than 32.
 
-## 17. Speculative decoding
+## 18. Speculative decoding
 
 The specdec path is built and validated (§4) but the layout study has barely touched it.
 What is known: on a speculative workload the layout effect **disappears**: head-major and
@@ -892,7 +892,7 @@ against placement, and the scorer choice (single-call MQA vs batch expansion) mo
 traffic by an order of magnitude, so the layout sensitivity may return entirely at the other
 operating point.
 
-## 18. Open questions
+## 19. Open questions
 
 1. **Behaviour under a hashing address mapper.** The placement assumes the bank index is a
    contiguous address field. A controller that folds row bits into it would scramble the
@@ -920,7 +920,7 @@ operating point.
 | `ONNXIM_KV_V_BANK_OFFSET` | `Attention.cc` | shift V's base by N bank slots |
 | `ONNXIM_KV_TILE_BANK_STRIDE` | `Attention.cc` | offset M-tile *m* by *m*·stride banks |
 | `ONNXIM_KV_REQ_ROTATE` | `Attention.cc` | per-request bank rotation |
-| `ONNXIM_KV_BANKCHUNK` / `_NBANKS` | `Attention.cc` | geometry, see §9.5 |
+| `ONNXIM_KV_BANKCHUNK` / `_NBANKS` | `Attention.cc` | geometry, see §10.5 |
 | `ONNXIM_KV_BLOCK` | `Attention.cc` | page size in tokens |
 | `ONNXIM_ACT_LANE` | `Attention.cc` | confine activation traffic to one bank slot |
 | `ONNXIM_WEIGHT_TILEBANK` | `Operation.cc` | same isolation for the weight stream |
@@ -1050,8 +1050,8 @@ Retained traces: `out/traces_layout/az128_{head,headbank_k1,block}.csv.gz` —
 | `RAMULATOR_SCHED_BANKPREP` | PRE→ACT gap 62 → 28.5 cycles, runtime 127 cycles in 7.4M at 1 core, **3.2% worse** at 4 cores |
 | `ONNXIM_WEIGHT_TILEBANK` (weights) | 73.9 → 73.1% hit, runtime −0.2% |
 | `ONNXIM_RR_TILE_ISSUE` (round-robin) | bandwidth +6–10 pts, run length −45 to −58%, runtime flat or worse |
-| `RAMULATOR_SCHED_ROWHIT` (the row-hit tier `FRFCFS` lacks) | ≤1.0 pt of hit on all four layouts; +0.0 on headbank (§15) |
-| enabling refresh (bug 10 fixed) | ≤0.2 pts of hit, ≤0.25% runtime, on all four layouts (§15) |
+| `RAMULATOR_SCHED_ROWHIT` (the row-hit tier `FRFCFS` lacks) | ≤1.0 pt of hit on all four layouts; +0.0 on headbank (§16) |
+| enabling refresh (bug 10 fixed) | ≤0.2 pts of hit, ≤0.25% runtime, on all four layouts (§16) |
 | page size for head-major | inert, +2.5 pts over a 16× range |
 | speculative decoding | layout-insensitive; head vs K=2 within 0.6% (KV is 7% of that workload) |
 
