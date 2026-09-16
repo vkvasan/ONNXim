@@ -44,6 +44,32 @@ time, prompt_length, target_length, cached_length
 | `target_length` | retire when `current_length` reaches this (`1` = one step) |
 | `cached_length` | KV already resident, so a run can start mid-conversation |
 
+### Using the Azure LLM Inference Dataset
+
+`traces/az128.csv` ships with the repo, so `./run.sh` works with no extra steps. It is
+128 requests sampled from Microsoft's conversation trace, contexts 169–5,305 tokens.
+
+To build your own, download the dataset (it is not redistributed here) and convert it:
+
+```bash
+# https://github.com/Azure/AzurePublicDataset
+wget https://raw.githubusercontent.com/Azure/AzurePublicDataset/master/data/AzureLLMInferenceTrace_conv.csv
+
+python3 scripts/make_workload.py AzureLLMInferenceTrace_conv.csv \
+    --n 128 --out traces/mytrace.csv
+```
+
+It samples `--n` requests whose `ContextTokens` fall in `--min-context … --max-context`,
+writes the request trace, and writes the matching `example/mytrace.json`, so:
+
+```bash
+./run.sh --workload mytrace
+```
+
+`--steps N` makes each request generate N tokens instead of one, which exercises the
+multi-step path (the cache grows and requests retire at different times). `--seed` fixes
+the sample.
+
 And a **model list** (`example/<name>.json`) naming the model and scheduler:
 
 ```json
