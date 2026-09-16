@@ -1,29 +1,80 @@
 # LLaMA-2 7B DRAM traces on a simulated NPU
 
-Clone, run one command, get a cycle-stamped DRAM address trace of LLaMA-2 7B decode.
+Simulate LLaMA-2 7B decode on a cycle-level NPU + HBM3 model and get the DRAM address
+trace: every memory request, with its cycle, bank, row, and which tensor it belongs to.
+
+## Requirements
+
+Docker, ~10 GB of disk, and a CPU core per run. Nothing else — the toolchain
+(gcc-10, CMake 3.22, conan) lives inside the image.
+
+## Run it
 
 ```bash
 git clone --recursive https://github.com/vkvasan/ONNXim_vLLM.git
-cd ONNXim
+cd ONNXim_vLLM
 ./run.sh
 ```
 
-That is all. The first run builds a Docker image and the simulator (~30 min once),
-then simulates 128 real serving requests and writes:
+`--recursive` matters: Ramulator2 is a submodule and the simulator will not build
+without it. If you forget, `git submodule update --init --recursive`.
+
+**What happens.** `run.sh` does each step only if it has not been done, so the first
+invocation is slow and later ones start immediately:
+
+| step | when | takes |
+|---|---|---|
+| build the Docker image | image `onnxim` absent | ~20 min |
+| start a container | not already running | seconds |
+| build the simulator | `build/bin/Simulator` absent | ~10 min |
+| **simulate** | every time | **~3 hours** |
+
+The simulation itself is one decode step over **128 real serving requests** (contexts
+169–5,305 tokens, from the Azure LLM Inference Dataset) against one transformer layer
+of LLaMA-2 7B, on a 4-core 128×128 NPU with HBM3.
+
+**What you get**, in `out/`:
 
 ```
-out/az128_headbank_pg64_k1.csv     the DRAM trace
-out/az128_headbank_pg64_k1.log     row-buffer statistics
+az128_headbank_pg64_k1.csv     the DRAM trace, one line per 32 B request
+az128_headbank_pg64_k1.log     row-buffer statistics, bandwidth, command mix
 ```
 
-Trace format, one line per 32 B DRAM request in arrival order at the controller:
+The filename encodes the configuration, so runs with different layouts do not
+overwrite each other.
 
 ```
 cycle,channel,pseudochannel,bankgroup,bank,row,column,address,rw,core,operand
 7,0,1,0,0,192,12,0x6004c00,R,0,102
 ```
 
-`operand` separates the streams: 100 = Q, 101 = K, 102 = V, >=200 = outputs, 0 = KV writes.
+`cycle` is DRAM cycles at 3.2 GHz (× 0.3125 = ns). `operand` identifies the stream:
+**100** = Q, **101** = K, **102** = V, **≥200** = outputs, **0** = KV writes — use this
+rather than address ranges, since activations share the KV address region.
+
+When it finishes it prints the headline numbers and where the files are:
+
+```
+==> done
+    ROWSPLIT kv+act   acc 6410112 hit 93.5% miss 3.4% confl 3.1%
+    dram cycles 21459674
+    trace  out/az128_headbank_pg64_k1.csv  (40000000 rows, 1.8G)
+```
+
+## Options
+
+```bash
+./run.sh --layout block        # paged block-major, the vLLM default
+./run.sh --layout head         # head-major
+./run.sh --page 16             # KV page size in tokens
+./run.sh --workload v8m1024    # a different request trace from traces/
+./run.sh --limit 5000000       # cap trace rows (default 40M; ~1.8 GB)
+./run.sh --no-trace            # statistics only, no trace file
+./run.sh --help
+```
+
+A full trace is ~5.5 GB uncompressed; `--limit` caps the rows written but not the
+runtime, which is always a complete simulation.
 
 ### Comparing KV cache layouts
 
