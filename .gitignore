@@ -1,4 +1,5 @@
 models/*
+!models/language_models/
 model_lists/*
 build/*
 out/

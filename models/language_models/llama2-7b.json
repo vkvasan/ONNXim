@@ -1,0 +1,14 @@
+{
+  "activation_function": "swish",
+  "num_attention_heads": 32,
+  "num_kv_heads": 32,
+  "vocab_size": 32000,
+  "num_hidden_layers": 32,
+  "hidden_size": 4096,
+  "intermediate_size": 11008,
+  "ffn_type": "llama",
+  "max_seq_length": 40960,
+  "run_single_layer": true,
+  "tensor_parallel_size": 1,
+  "pipeline_parallel_size": 1
+}
