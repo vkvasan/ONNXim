@@ -12,4 +12,5 @@
 	url = https://github.com/PSAL-POSTECH/booksim.git
 [submodule "extern/ramulator2"]
 	path = extern/ramulator2
-	url = https://github.com/PSAL-POSTECH/ramulator2.git
+	url = https://github.com/vkvasan/ramulator2.git
+	branch = kv-instrumentation
