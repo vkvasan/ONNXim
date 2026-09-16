@@ -17,11 +17,11 @@ per-step cache growth, on top of a cycle-level NPU and DRAM model, turning a rea
 trace into a cycle-stamped, per-stream DRAM address stream. **A layout study** run on it:
 where a paged KV cache should sit in physical memory, and what that is worth.
 
-The simulator's enabling move is an approximation: **simulate one transformer layer and scale
-the footprint by 32.** Consecutive layers touch disjoint rows, so no row buffer survives a
-layer boundary and there is no cross-layer locality to forfeit by stopping after one. That
-takes a cycle-level decode step from ~4 days to ~3 hours, which is what makes the study
-feasible at all (§1).
+The simulator's enabling move is an approximation: **simulate a single transformer layer.**
+Consecutive layers touch disjoint rows, so no row buffer survives a layer boundary and there
+is no cross-layer locality to forfeit by stopping after one; a 32-layer step is 32 sequential
+repetitions of this one at different addresses. That takes a cycle-level decode step from
+~4 days to ~3 hours, which is what makes the study feasible at all (§1).
 
 Two findings, in descending order of how cheaply you can have them.
 
@@ -66,12 +66,14 @@ room. A block table was added (§3) so that logical block *n* is not physical bl
 is the difference between simulating a tensor and simulating a cache, and it is what makes
 allocator fragmentation a measurable effect rather than an assumption.
 
-**The approximation that makes multi-step tractable: simulate one transformer layer.**
+**The approximation that makes this tractable: simulate a single transformer layer.** The
+workloads here use `llama2-7b-1L`, a model declared with `num_hidden_layers: 1`, so one
+layer's DRAM traffic is what is simulated and reported. (The scheduler also supports
+declaring the full 32 and simulating one, in which case it scales the reported footprint by
+`_num_layers`; that path is not used by any result below.)
 
 ```cpp
-_num_sim_layers = _run_single_layer ? 1 : _num_layers;   // 1 instead of 32
-...
-if (_run_single_layer) kv_size *= _num_layers;           // footprint scaled back up
+_num_sim_layers = _run_single_layer ? 1 : _num_layers;
 ```
 
 The justification is about locality, not about the layers looking alike. **Consecutive layers
@@ -91,10 +93,16 @@ The arithmetic this buys:
 Without it, a single cycle-level decode step of a 32-layer model takes days, and multi-step
 is simply not reachable. Everything in Part III rests on this approximation.
 
-Its cost is bounded and worth stating: the ~32 layer-boundary transitions per step are not
+Its cost is bounded and worth stating. The ~32 layer-boundary transitions per step are not
 modelled, against 6.4M KV accesses, and neither is any cross-layer tile overlap that a real
 run would produce and a single-layer run structurally cannot. The weight stream *is* present
 and interleaved with KV exactly as it would be, but only one layer's worth of it.
+
+The footprint is also one layer's: 3.05 GB of KV at 200,064 tokens. A 32-layer deployment at
+that batch would need ~98 GB, well beyond the 16 GB modelled here. **This is the per-layer
+access pattern of a large batch, not a deployable memory configuration** — the batch size is
+chosen to make the KV stream dominant and realistic in shape, not to be servable on this
+part.
 
 **A fast path for speculative decoding.** The cycle-level loop costs 35–45 minutes per verify
 step, which makes parameter sweeps impossible. An open-loop generator produces the same

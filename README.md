@@ -3,7 +3,7 @@
 Clone, run one command, get a cycle-stamped DRAM address trace of LLaMA-2 7B decode.
 
 ```bash
-git clone --recursive https://github.com/vkvasan/ONNXim.git
+git clone --recursive https://github.com/vkvasan/ONNXim_vLLM.git
 cd ONNXim
 ./run.sh
 ```

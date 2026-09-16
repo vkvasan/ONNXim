@@ -38,7 +38,7 @@ git submodule sync
 git checkout -b kv-placement
 git add -A
 git commit -m "KV cache placement study: head-to-bank layout, specdec scheduler, DRAM tracing"
-git remote add mine https://github.com/<you>/ONNXim.git
+git remote add mine https://github.com/<you>/ONNXim_vLLM.git
 git push -u mine kv-placement
 ```
 
@@ -54,7 +54,7 @@ Docker is the supported path. The build needs gcc-10, CMake 3.22 and conan 1.57,
 image pins; host builds against newer toolchains are not tested.
 
 ```bash
-git clone --recursive https://github.com/<you>/ONNXim.git
+git clone --recursive https://github.com/<you>/ONNXim_vLLM.git
 cd ONNXim
 docker build -t onnxim .          # ~20 min: builds CMake from source, installs torch
 ```
