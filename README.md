@@ -86,11 +86,19 @@ runtime, which is always a complete simulation.
 
 Measured on 128 Azure requests, 4 x 128x128 NPU, HBM3:
 
-| layout | KV row hit | row activations | cycles |
-|---|---|---|---|
-| block-major, 16-token pages | 79.3% | 1,326,887 | 24.19M |
-| block-major, 64-token pages | 89.5% | 673,062 | 20.84M |
-| head-to-bank, 64-token pages | **93.5%** | **416,657** | 21.46M |
+| KV layout | row-buffer hit | row activations |
+|---|---|---|
+| block-major, 16-token pages *(the vLLM default)* | 79.3% | 1,326,887 |
+| block-major, 64-token pages † | 89.5% | 673,062 |
+| **head-to-bank, 64-token pages** | **93.5%** | **416,657** |
+
+**Putting the head index on the DRAM bank field cuts row activations 3.2x.** Each head
+then owns a bank no other head can address, so nothing evicts its rows.
+
+† The middle row is the same mechanism reached by accident. At 64 tokens the block-major
+address expression reduces to `bank = head` — it *is* the head-to-bank mapping, without the
+512 KB-aligned base that makes the assignment exact. Supplying that alignment is worth the
+remaining 4 points and a further 1.6x on activations.
 
 A run takes ~3 hours. `./run.sh --help` lists the options.
 
