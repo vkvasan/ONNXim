@@ -123,7 +123,7 @@ reorder requests but cannot change which addresses share a row.
 
 ## Documentation
 
-- [`KV_PLACEMENT.md`](KV_PLACEMENT.md) — the writeup: what was measured and why
+- [`KV_PLACEMENT.md`](KV_PLACEMENT.md) — the writeup: what was measured and why ([PDF](KV_PLACEMENT.pdf))
 - [`TRACES.md`](TRACES.md) — generating DRAM traces in detail
 - [`SETUP.md`](SETUP.md) — build, and publishing a fork
 - [`SPECDEC.md`](SPECDEC.md) — speculative decoding
