@@ -1,5 +1,7 @@
 #include "Common.h"
 
+#include <cstdlib>
+
 uint32_t generate_id() {
   static uint32_t id_counter{0};
   return id_counter++;
@@ -112,6 +114,29 @@ SimulationConfig initialize_config(json config) {
     parsed_config.dram_size = config["dram_size"];
   else
     parsed_config.dram_size = 0;
+
+  /* DRAM organization (only used to decode the access trace) */
+  if (config.contains("dram_pseudochannels"))
+    parsed_config.dram_pseudochannels = config["dram_pseudochannels"];
+  if (config.contains("dram_bankgroups"))
+    parsed_config.dram_bankgroups = config["dram_bankgroups"];
+  if (config.contains("dram_banks"))
+    parsed_config.dram_banks = config["dram_banks"];
+  if (config.contains("dram_rows"))
+    parsed_config.dram_rows = config["dram_rows"];
+  if (config.contains("dram_columns"))
+    parsed_config.dram_columns = config["dram_columns"];
+  if (config.contains("dram_prefetch_size"))
+    parsed_config.dram_prefetch_size = config["dram_prefetch_size"];
+  if (config.contains("dram_channel_width"))
+    parsed_config.dram_channel_width = config["dram_channel_width"];
+
+  if (config.contains("tile_depth"))
+    parsed_config.tile_depth = config["tile_depth"];
+  if (const char* td = std::getenv("ONNXIM_TILE_DEPTH")) {
+    uint32_t v = (uint32_t)std::strtoul(td, nullptr, 10);
+    if (v >= 2) parsed_config.tile_depth = v;
+  }
 
   /* Icnt config */
   std::string icnt_type = get_config_value<std::string>(config, "icnt_type");

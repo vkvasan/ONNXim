@@ -41,6 +41,21 @@ class Operation {
  protected:
   virtual void initialize_instructions(Tile* tile, Mapping mapping) {}
   addr_type make_address(std::vector<uint32_t> index, std::vector<uint32_t> dims);
+  /*
+   * Tile-major ("pre-packed") address for a 2-D weight tensor. Row-major makes
+   * a tile a strided gather: c_tile contiguous elements, then a jump of the
+   * full row. Storing tile-major makes each tile ONE contiguous run, so the
+   * 2-D walk becomes a 1-D sweep. Weights are read-only and written once, so a
+   * real toolchain does this at load time for free.
+   * Enabled by ONNXIM_WEIGHT_SWIZZLE=1.
+   */
+  static uint32_t weight_tilebank_streams();      /* ONNXIM_WEIGHT_TILEBANK */
+  addr_type weight_tilebank_pad(addr_type base);
+  addr_type make_address_tiled(std::vector<uint32_t> index,
+                               std::vector<uint32_t> dims,
+                               uint32_t m_tile, uint32_t c_tile);
+  static bool weight_swizzle_enabled();
+  static int intra_tile_order();
   addr_type get_operand_addr(uint32_t operand_id);
   std::string get_attribute(std::string key);
  protected:

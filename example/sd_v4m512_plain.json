@@ -1,0 +1,18 @@
+{
+  "models": [
+    {
+      "name": "llama2-7b-1L",
+      "trace_file": "sd_v4m512_plain.csv",
+      "scheduler": "specdec",
+      "scheduler_config": {
+        "max_batch_size": 128,
+        "spec_k": 0,
+        "spec_alpha": 0.8,
+        "spec_seed": 7,
+        "scorer": "mqa",
+        "spec_disable_batch": 0,
+        "accept_file": "traces/sd_v4m512_plain.accept"
+      }
+    }
+  ]
+}

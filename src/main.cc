@@ -3,6 +3,7 @@
 #include <filesystem>
 
 #include "Simulator.h"
+#include "scheduler/Scheduler.h"
 #include "helper/CommandLineParser.h"
 #include "operations/OperationFactory.h"
 
@@ -125,6 +126,13 @@ int main(int argc, char** argv) {
   auto end = std::chrono::high_resolution_clock::now();
   std::chrono::duration<double> duration = end - start;
   spdlog::info("Simulation time: {:2f} seconds", duration.count());
+  spdlog::info("[SCHED] barrier-blocked tile-issue attempts {} | barriers crossed {}",
+               Scheduler::s_bar_stall_calls, Scheduler::s_bar_crossed);
+  spdlog::info("[SCHED] core had a free tile slot on {} core-cycles; scheduler had NO tile "
+               "to give on {} of them ({:.1f}%)",
+               Simulator::s_slot_free, Simulator::s_slot_free_no_tile,
+               Simulator::s_slot_free ?
+                 (double)Simulator::s_slot_free_no_tile * 100 / Simulator::s_slot_free : 0.0);
   spdlog::info("Total tile: {}, simulated tile per seconds(TPS): {:3f}",
     simulator->get_number_tile(), simulator->get_tile_ops());
   return 0;

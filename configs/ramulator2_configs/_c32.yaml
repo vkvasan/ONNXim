@@ -1,0 +1,117 @@
+# HBM3 at a realistic 6.4 Gbps/pin data rate (JESD238 class).
+#
+# WHY THIS FILE EXISTS
+# Ramulator2 ships exactly one HBM3 timing preset, HBM3_2Gbps, and its source
+# comment admits "TODO: Find more sources on HBM3 timings...". That preset is
+# slower per pin than the HBM2_2.5Gbps preset the stock tpuv4 config uses, so
+# "switching to HBM3" via the preset would *lose* bandwidth. Ramulator2 also
+# refuses to combine a timing preset with a `rate` override
+# ("Cannot change the transfer rate ... when using a speed preset"), so a full
+# explicit timing set is the only way to model 6.4 Gbps.
+#
+# HOW THESE NUMBERS WERE DERIVED
+# Same DRAM core, faster bus: the absolute (nanosecond) timings of the bundled
+# HBM3_2Gbps preset are held constant and re-expressed in cycles at the 6.4 Gbps
+# clock. At 2 Gbps tCK = 1000 ps, so each preset cycle count equals its value in
+# ns; at 6.4 Gbps tCK = 1E6/(6400/2) = 312 ps (Ramulator2 uses integer ps).
+# Conversion is ceil(t_ns * 1000 / 312).
+#
+#   param     t_ns (from HBM3_2Gbps)   cycles @312ps
+#   nCL          7                      23
+#   nRCDRD       7                      23
+#   nRCDWR       7                      23
+#   nRP          7                      23
+#   nRAS        17                      55
+#   nRC         19                      61
+#   nWR          8                      26
+#   nRTPS        2                       7
+#   nRTPL        3                      10
+#   nCWL         2                       7
+#   nRRDS        2                       7
+#   nRRDL        3                      10
+#   nWTRS        3                      10
+#   nWTRL        4                      13
+#   nRTW         3                      10
+#   nFAW        15                      49
+#   nRFCSB     160                     513
+#   nREFI     3900                   12500
+#   nRREFD       8                      26
+#
+# Two values are deliberately NOT time-scaled, because they are bus-cycle
+# structural constants rather than DRAM-core delays:
+#   nBL   = 4  -- BL8 on a DDR bus is 4 clock cycles at any data rate.
+#   nCCDS = 4  -- minimum column-to-column spacing must cover the burst (= nBL).
+#                 The bundled preset's nCCDS=1 is inconsistent with its own
+#                 nBL=4; the data-bus-occupancy constraint made it harmless.
+#   nCCDL = 8  -- keeps the preset's 2x nCCDS bank-group ratio.
+#
+# nRFC and nREFISB are intentionally omitted: HBM3.cpp computes them from its
+# internal tRFC table (350 ns for the 8Gb density) after applying tCK.
+#
+# CAVEAT: these are frequency-scaled values, not vendor-validated JEDEC HBM3
+# timings. They are self-consistent and suitable for relative comparisons
+# (prefill vs decode, scratchpad sweeps). Do not cite them as absolute HBM3
+# latencies.
+#
+# BANK-SPREAD VARIANT of HBM3_6.4Gbps.yaml.
+# column 64 -> 16 with row 32768 -> 131072 keeps density at exactly 8 Gb
+# (2 x 4 x 4 x row x column x 128), but shortens the run of consecutive
+# addresses landing in one bank from 512 B to 128 B. Under RoBaRaCoCh that
+# raises the banks covered by the controller's 64-entry window from ~5 of 32
+# to ~4x more, cutting 'blocked' cycles from 42.8% to 33.8% standalone.
+# Costs row locality (hit rate 88.1% -> 68.5%); 16 is the measured optimum.
+#
+# Set dram_columns: 16 and dram_rows: 131072 in the JSON so the access-trace
+# decoder stays in sync.
+#
+# Pair this file with "dram_freq": 3200 in the ONNXim JSON config
+# (tCK = 312 ps -> 3200 MHz command clock, 6.4 Gbps DDR).
+Frontend:
+  impl: GEM5
+
+MemorySystem:
+  impl: GenericDRAM
+  clock_ratio: 1
+
+  DRAM:
+    impl: HBM3
+    org:
+      preset: HBM3_8Gb
+      channel: 1
+      column: 32
+      row: 65536
+    timing:
+      rate: 6400
+      nBL: 4
+      nCL: 23
+      nRCDRD: 23
+      nRCDWR: 23
+      nRP: 23
+      nRAS: 55
+      nRC: 61
+      nWR: 26
+      nRTPS: 7
+      nRTPL: 10
+      nCWL: 7
+      nCCDS: 4
+      nCCDL: 8
+      nRRDS: 7
+      nRRDL: 10
+      nWTRS: 10
+      nWTRL: 13
+      nRTW: 10
+      nFAW: 49
+      nRFCSB: 513
+      nREFI: 12500
+      nRREFD: 26
+
+  Controller:
+    impl: Generic
+    Scheduler:
+      impl: FRFCFS
+    RefreshManager:
+      impl: AllBank
+    plugins:
+
+  AddrMapper:
+    impl: RoBaRaCoCh

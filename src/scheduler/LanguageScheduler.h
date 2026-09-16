@@ -17,12 +17,26 @@ struct LangRequest {
   uint32_t target_length;
   std::vector<std::unique_ptr<Tensor>> key_cache;
   std::vector<std::unique_ptr<Tensor>> value_cache;
+  /* Speculative decoding (SpecDecScheduler) only. The draft model keeps its
+     own KV cache; draft_length is the number of rows resident in it. */
+  std::vector<std::unique_ptr<Tensor>> draft_key_cache;
+  std::vector<std::unique_ptr<Tensor>> draft_value_cache;
+  uint32_t draft_length = 0;
+  uint32_t spec_steps = 0;        /* verify steps this request took part in */
+  uint32_t spec_accepted = 0;     /* draft tokens accepted, summed over steps */
 };
 
 class LangScheduler {
   public:
     static std::unique_ptr<LangScheduler> create(std::string name, std::string path, 
                                                   std::unique_ptr<LanguageModel> model,
+                                                  SimulationConfig config,
+                                                  json scheduler_config);
+    /* Same, with an optional draft model (may be nullptr). Only the "specdec"
+       scheduler uses it; the others ignore it. */
+    static std::unique_ptr<LangScheduler> create(std::string name, std::string path, 
+                                                  std::unique_ptr<LanguageModel> model,
+                                                  std::unique_ptr<LanguageModel> draft,
                                                   SimulationConfig config,
                                                   json scheduler_config);
     LangScheduler(std::string name, std::string path, 
@@ -61,6 +75,7 @@ class LangScheduler {
 
     std::vector<uint32_t> _max_dims;
 
+    /* protected (was private) so SpecDecScheduler can reuse them */
     void parse_request_trace(std::string trace_path);
     void init_request(std::unique_ptr<LangRequest>& request);
     void init_inputs_and_model();

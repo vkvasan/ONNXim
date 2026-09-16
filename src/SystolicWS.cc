@@ -3,7 +3,28 @@
 SystolicWS::SystolicWS(uint32_t id, SimulationConfig config)
     : Core(id, config) {}
 
+uint32_t SystolicWS::preload_div() {
+  static const uint32_t d = [] {
+    const char* e = std::getenv("ONNXIM_PRELOAD_DIV");
+    uint32_t v = e ? (uint32_t)std::strtoul(e, nullptr, 10) : 1;
+    return v ? v : 1;
+  }();
+  return d;
+}
+
 void SystolicWS::cycle() {
+  if (_core_cycle == 0) {
+    if (const char* vd = std::getenv("ONNXIM_VECTOR_DEPTH")) {
+      uint64_t v = std::strtoull(vd, nullptr, 10);
+      if (v) _vector_depth = v;
+    }
+    if (const char* it = std::getenv("ONNXIM_INST_TRACE")) {
+      std::string path = std::string(it) + "." + std::to_string(_id);
+      _inst_fp = fopen(path.c_str(), "w");
+      if (_inst_fp)
+        fprintf(_inst_fp, "epoch,opcode,left_exq,start,finish,pipe_depth\n");
+    }
+  }
     /*
   Compute unit
   */
@@ -47,8 +68,12 @@ void SystolicWS::cycle() {
         offset = MAX(offset, 4);
         if (front->opcode == Opcode::GEMM_PRELOAD) {
           // State mul-pre
-          offset = MAX(offset, _config.core_config[_id].core_height);
+          /* ONNXIM_PRELOAD_DIV: rows loaded into the array per cycle. 1 = stock
+             (one row/cycle). NOTE the model does NOT charge for the extra edge
+             wiring or the SRAM read bandwidth this would require. */
+          offset = MAX(offset, _config.core_config[_id].core_height / preload_div());
           _stat_systolic_preload_issue_count++;
+          _stat_preload_warm++;   /* pipeline non-empty: 128-cycle path */
         }
         if (_compute_pipeline.back()->start_cycle+offset < _core_cycle) {
           front->start_cycle = _core_cycle;
@@ -62,9 +87,14 @@ void SystolicWS::cycle() {
           /* Weight preload  from buffer latecny + WEight preload latency */
           front->start_cycle += _config.core_config[_id].core_height + _config.core_config[_id].core_height - 1;
           _stat_systolic_preload_issue_count++;
+          _stat_preload_cold++;   /* pipeline empty: full 2*height-1 path */
         }
       }
       front->finish_cycle = front->start_cycle + get_inst_compute_cycles(front);
+      if (_inst_fp)
+        fprintf(_inst_fp, "%lu,%d,%lu,%lu,%lu,%zu\n", front->load_epoch,
+                (int)front->opcode, _core_cycle, front->start_cycle,
+                front->finish_cycle, _compute_pipeline.size());
       _compute_pipeline.push(std::move(front));
       _stat_systolic_inst_issue_count++;
     } else {  // vector unit compute
@@ -72,6 +102,10 @@ void SystolicWS::cycle() {
       front->finish_cycle =
           front->start_cycle +
           get_vector_compute_cycles(front);  // Setting IC as 1 (Might need to modify)
+      if (_inst_fp)
+        fprintf(_inst_fp, "%lu,%d,%lu,%lu,%lu,%zu\n", front->load_epoch,
+                (int)front->opcode, _core_cycle, front->start_cycle,
+                front->finish_cycle, _vector_pipeline.size());
       _vector_pipeline.push(std::move(front));
     }
     _ex_inst_queue.pop();
@@ -115,7 +149,7 @@ bool SystolicWS::can_issue_compute(std::unique_ptr<Instruction>& inst) {
       return false;
     }
   } else {
-    if(!_vector_pipeline.empty()) {
+    if (_vector_pipeline.size() >= _vector_depth) {
       return false;
     }
   }
@@ -173,4 +207,10 @@ void SystolicWS::print_stats() {
                _stat_systolic_inst_issue_count);
   spdlog::info("Core [{}] : Systolic PRELOAD Issue Count : {}", _id,
                _stat_systolic_preload_issue_count);
+  spdlog::info("Core [{}] : PRELOAD warm({} cyc) {} | cold({} cyc) {} -> cold {:.1f}%",
+               _id, _config.core_config[_id].core_height,  _stat_preload_warm,
+               2 * _config.core_config[_id].core_height - 1, _stat_preload_cold,
+               (_stat_preload_warm + _stat_preload_cold)
+                   ? 100.0 * _stat_preload_cold / (_stat_preload_warm + _stat_preload_cold)
+                   : 0.0);
 }

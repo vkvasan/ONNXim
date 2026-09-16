@@ -1,4 +1,8 @@
 #include "Simulator.h"
+#include <fstream>
+
+uint64_t Simulator::s_slot_free = 0;
+uint64_t Simulator::s_slot_free_no_tile = 0;
 
 #include <filesystem>
 #include <string>
@@ -124,16 +128,25 @@ void Simulator::cycle() {
           _scheduler->finish_tile(core_id, finished_tile->layer_id);
         }
         // Issue new tile to core
+        bool slot_free = _cores[core_id]->can_issue(false);
+        bool got_tile = false;
         if (!_scheduler->empty()) {
           is_accum_tile = _scheduler->is_accum_tile(core_id, 0);
           if (_cores[core_id]->can_issue(is_accum_tile)) {
             std::unique_ptr<Tile> tile = _scheduler->get_tile(core_id);
             if (tile->status == Tile::Status::INITIALIZED) {
+              got_tile = true;
               _cores[core_id]->issue(std::move(tile));
               _tile_timestamp.push_back(std::chrono::high_resolution_clock::now());
             }
           }
         }
+        /*
+         * The core had room for another tile but got none: the scheduler had
+         * nothing to give. This is workload dependency, not a core limit.
+         */
+        if (slot_free && !got_tile) Simulator::s_slot_free_no_tile++;
+        if (slot_free) Simulator::s_slot_free++;
         _cores[core_id]->cycle();
       }
       _core_cycles++;
@@ -147,6 +160,23 @@ void Simulator::cycle() {
     if (_cycle_mask & ICNT_MASK) {
       _icnt_cycle++;
 
+      /* ONNXIM_ICNT_PORT_BY_CHANNEL=1: inject each request on the port that
+         serves its DRAM channel instead of rotating through the ports. Stock
+         fans a core's single FIFO out across all ports (request i -> port
+         i mod N) and the interconnect drains a channel's inputs round-robin
+         over those ports, so a core's requests reach one channel locally
+         shuffled by up to N x queue depth. A bank-hopping stream never sees
+         it (consecutive chunks are in different banks); a bank-confined
+         stream gets rows r and r+1 interleaved and the controller ping-pongs
+         them (measured: 72% of KV row visits re-open a just-left row, all
+         same-core, all < 2 MB apart). Per-(core,channel) FIFOs preserve
+         source->destination order, which is what a crossbar/NoC gives a
+         single flow anyway; injection rate is unchanged (up to N per cycle).
+         The response path already maps channel -> port this way. */
+      static const bool port_by_channel = [] {
+        const char* v = std::getenv("ONNXIM_ICNT_PORT_BY_CHANNEL");
+        return v && v[0] == '1';
+      }();
       for (int core_id = 0; core_id < _n_cores; core_id++) {
         for (int noc_id = 0; noc_id < _noc_node_per_core; noc_id++) {
           // PUHS core to ICNT. memory request
@@ -154,10 +184,15 @@ void Simulator::cycle() {
           if (_cores[core_id]->has_memory_request()) {
             MemoryAccess *front = _cores[core_id]->top_memory_request();
             front->core_id = core_id;
+            if (port_by_channel)
+              port_id = core_id * _noc_node_per_core +
+                        (_dram->get_channel_id(front) % _noc_node_per_core);
             if (!_icnt->is_full(port_id, front)) {
               _icnt->push(port_id, get_dest_node(front), front);
               _cores[core_id]->pop_memory_request();
               _nr_from_core++;
+            } else if (port_by_channel) {
+              break;   /* head-of-line: this channel's port is full, try next cycle */
             }
           }
           // Push response from ICNT. to Core.
@@ -224,10 +259,43 @@ void Simulator::register_language_model(json info, std::unique_ptr<LanguageModel
   std::string onnxim_path = onnxim_path_env != NULL?
   std::string(onnxim_path_env) : std::string("./");
   trace_file = fs::path(onnxim_path).append("traces").append(trace_file).string();
+  auto log_weight_range = [&](const std::string& n) {
+    addr_type lo = ~(addr_type)0, hi = 0;
+    for (auto& t : _weight_table[n]) {
+      lo = std::min(lo, t->get_address());
+      hi = std::max(hi, (addr_type)(t->get_address() + t->get_size()));
+    }
+    spdlog::info("[MEM] weights {} allocated at [{:#x},{:#x}) ({} tensors)", n, lo, hi, _weight_table[n].size());
+    for (auto& t : _weight_table[n])
+      spdlog::info("[MEM] tensor {} {} {:#x}+{:#x}", n, t->get_name(), t->get_address(), t->get_size());
+  };
   if(_weight_table.find(name) == _weight_table.end()) {
     model->initialize_weight(_weight_table[name]);
+    log_weight_range(name);
   }
-  _lang_scheduler = LangScheduler::create(name, trace_file, std::move(model), _config, info);
+  /* Speculative decoding: an optional draft model named in scheduler_config.
+     Its weights are allocated right after the target's, before any KV cache,
+     so an address-threshold weight/KV split (RAMULATOR_WEIGHT_LIMIT) still
+     works if the limit covers both models. */
+  std::unique_ptr<LanguageModel> draft = nullptr;
+  if (info.contains("scheduler_config") && info["scheduler_config"].contains("draft_model")) {
+    std::string dname = info["scheduler_config"]["draft_model"];
+    std::string dpath = fs::path(onnxim_path).append("models").append("language_models")
+                            .append(dname + ".json").string();
+    std::ifstream dfile(dpath);
+    if (!dfile) {
+      spdlog::error("Error opening draft model file: {}", dpath);
+      exit(EXIT_FAILURE);
+    }
+    json djson = json::parse(dfile);
+    draft = std::make_unique<LanguageModel>(djson, _config, dname);
+    spdlog::info("Register draft Language Model: {}", dname);
+    if(_weight_table.find(dname) == _weight_table.end()) {
+      draft->initialize_weight(_weight_table[dname]);
+      log_weight_range(dname);
+    }
+  }
+  _lang_scheduler = LangScheduler::create(name, trace_file, std::move(model), std::move(draft), _config, info);
 }
 
 void Simulator::finish_language_model(uint32_t model_id) {

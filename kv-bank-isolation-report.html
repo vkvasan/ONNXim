@@ -1,0 +1,653 @@
+<title>NPU-HBM Access-Pattern Analysis for LLM Decode</title>
+<style>
+  :root{
+    --ground:#6B7381;
+    --paper:#FBFAF6;
+    --ink:#18222E;
+    --ink-2:#3F4B5A;
+    --ink-3:#77808D;
+    --rule:#BEC5CE;
+    --hair:#DFE2E7;
+    --accent:#2B4C7E;
+    --wash:#EFF2F6;
+    --wash-2:#E4E9F0;
+    --serif:"Palatino Linotype","Book Antiqua",Palatino,"URW Palladio L","Liberation Serif","Times New Roman",serif;
+    --sans:"Helvetica Neue",Helvetica,Arial,"Liberation Sans",sans-serif;
+    --mono:ui-monospace,"SF Mono",Menlo,Consolas,"DejaVu Sans Mono",monospace;
+  }
+  @media (prefers-color-scheme:dark){
+    :root:not([data-theme="light"]){ --ground:#1B2028; }
+  }
+  :root[data-theme="dark"]{ --ground:#1B2028; }
+
+  *{box-sizing:border-box}
+  body{
+    background:var(--ground); color:var(--ink);
+    font-family:var(--sans); font-size:9.9pt; line-height:1.5;
+    margin:0; padding:30px 14px 80px;
+  }
+
+  .sheet{
+    background:var(--paper); color:var(--ink);
+    width:100%; max-width:8.5in; min-height:10.9in;
+    margin:0 auto 22px; padding:0.78in 0.95in 0.55in;
+    border:1px solid #565E6B;
+    display:flex; flex-direction:column;
+  }
+  .sheet > .body{flex:1}
+
+  .runhead{
+    display:flex; justify-content:space-between; align-items:baseline;
+    font-family:var(--sans); font-size:6.8pt; letter-spacing:.16em;
+    text-transform:uppercase; color:var(--ink-3);
+    border-bottom:.5px solid var(--rule); padding-bottom:6px; margin-bottom:30px;
+  }
+  .folio{
+    font-family:var(--sans); font-size:7.2pt; letter-spacing:.1em; color:var(--ink-3);
+    text-align:right; margin-top:28px; padding-top:7px; border-top:.5px solid var(--hair);
+  }
+
+  /* ---------- memo header ---------- */
+  .titleblock{text-align:left; margin:0 0 26px; padding-bottom:0}
+  .doctype{
+    font-family:var(--sans); font-size:7pt; letter-spacing:.24em; text-transform:uppercase;
+    color:var(--accent); margin:0 0 22px; padding-bottom:7px;
+    border-bottom:2px solid var(--accent);
+  }
+  h1{
+    font-family:var(--sans); font-size:19pt; line-height:1.2; font-weight:700;
+    letter-spacing:-.022em; margin:0 0 12px; max-width:34ch;
+  }
+  .subtitle{
+    font-family:var(--sans); font-size:9.6pt; font-style:normal; line-height:1.4;
+    color:var(--ink-2); margin:0 0 20px; max-width:52ch;
+  }
+  .byline{
+    font-family:var(--mono); font-size:7.6pt; line-height:1.9; color:var(--ink-2);
+    margin:0; padding:9px 0 0; border-top:.5px solid var(--hair);
+  }
+
+  /* ---------- abstract ---------- */
+  .abstract{margin:24px 0 0; padding:0}
+  .abstract h2{
+    font-family:var(--sans); font-size:7pt; letter-spacing:.2em; text-transform:uppercase;
+    color:var(--ink-3); text-align:left; margin:0 0 9px; font-weight:700;
+  }
+  .abstract p{
+    margin:0 0 8px; font-size:9.3pt; line-height:1.52; text-align:left;
+    padding-left:1.5em; border-left:1px solid var(--rule);
+  }
+
+  /* ---------- headings, hung numbers ---------- */
+  h2{
+    font-family:var(--sans); font-size:11pt; font-weight:700; letter-spacing:-.012em;
+    margin:30px 0 9px; padding-left:2.4em; text-indent:-2.4em; line-height:1.28;
+    page-break-after:avoid;
+  }
+  h2:first-child{margin-top:0}
+  h2 .n{
+    font-family:var(--mono); font-weight:400; font-size:10pt; color:var(--accent);
+    display:inline-block; width:2.4em; text-indent:0;
+  }
+  h3{
+    font-family:var(--sans); font-size:9pt; font-weight:700; font-style:normal;
+    letter-spacing:.02em; margin:20px 0 5px; page-break-after:avoid;
+  }
+  p{margin:0 0 9px; text-align:left; hyphens:none}
+  p + p{text-indent:0}
+  strong{font-weight:700}
+  em{font-style:italic}
+  code{font-family:var(--mono); font-size:.85em}
+  .lede{color:var(--ink-2); font-size:10.4pt; line-height:1.5}
+
+  /* ---------- displays ---------- */
+  pre{
+    font-family:var(--mono); font-size:7.9pt; line-height:1.6;
+    background:none; border:none; border-left:2px solid var(--accent);
+    padding:9px 0 9px 15px; background:var(--wash); margin:14px 0 16px; overflow-x:auto; color:var(--ink-2);
+  }
+  pre b{color:var(--ink); font-weight:700}
+  pre .g,pre .c{color:var(--ink); font-weight:700}
+
+  figure{margin:18px 0; page-break-inside:avoid}
+  figcaption, .tabcaption{
+    font-family:var(--sans); font-size:7.8pt; line-height:1.42; color:var(--ink-2); margin-top:8px;
+  }
+  .tabcaption{margin:0 0 6px}
+  figcaption b, .tabcaption b{
+    font-weight:700; color:var(--ink); letter-spacing:.02em; margin-right:.45em; text-transform:none;
+  }
+
+  /* ---------- tables: monochrome, hairline ---------- */
+  .tablewrap{overflow-x:auto; margin:14px 0 18px; page-break-inside:avoid}
+  table{
+    border-collapse:collapse; width:100%;
+    font-family:var(--mono); font-size:7.9pt; font-variant-numeric:tabular-nums;
+    border-top:1.6px solid var(--accent); border-bottom:1.6px solid var(--accent);
+  }
+  th{
+    font-family:var(--sans); font-weight:700; font-size:6.9pt; letter-spacing:.1em;
+    text-transform:uppercase; color:var(--accent); text-align:right; padding:7px 10px 6px;
+    border-bottom:.7px solid var(--rule); background:var(--wash); white-space:nowrap;
+  }
+  th:first-child, td:first-child{text-align:left}
+  td{padding:4.5px 10px; text-align:right; white-space:nowrap; color:var(--ink-2)}
+  tbody tr:first-child td{padding-top:7px}
+  tbody tr:last-child td{padding-bottom:7px}
+  td.k{color:var(--ink); font-family:var(--sans); font-size:8.6pt}
+  td.good{color:var(--accent); font-weight:700}
+  td.bad{color:var(--ink-3); font-weight:400}
+  tr.hi td{background:var(--wash); box-shadow:inset 2px 0 0 var(--accent)}
+  tr.hi td:first-child{padding-left:12px}
+  tr.rule td{border-top:.5px solid var(--hair)}
+
+  /* ---------- notes: indented, unboxed ---------- */
+  .note{
+    margin:14px 0 16px 1.6em; padding:0; background:none;
+    border:none; border-left:1px solid var(--rule); padding-left:14px;
+    font-size:9.2pt; line-height:1.44;
+  }
+  .note p{margin:0; text-align:left; color:var(--ink-2)}
+  .note b{color:var(--ink); font-weight:700}
+
+  .mk{
+    font-family:var(--sans); font-size:6.6pt; letter-spacing:.16em; text-transform:uppercase;
+    color:var(--ink-3); font-weight:700; vertical-align:.32em; margin-left:.6em;
+  }
+
+  /* ---------- part dividers ---------- */
+  .part{margin:0 0 26px; padding:0 0 8px; border-bottom:2px solid var(--accent)}
+  .part .pnum{
+    font-family:var(--sans); font-size:7pt; letter-spacing:.24em; text-transform:uppercase;
+    color:var(--accent); display:block; margin-bottom:5px; font-weight:700;
+  }
+  .part .ptitle{font-family:var(--sans); font-size:17pt; font-weight:700; letter-spacing:-.02em;
+    line-height:1.12; display:block}
+
+  /* ---------- contents ---------- */
+  .toc{margin:26px 0 0; padding-top:14px; border-top:.5px solid var(--hair)}
+  .toc h2{
+    font-family:var(--sans); font-size:7pt; letter-spacing:.2em; text-transform:uppercase;
+    color:var(--ink-3); text-align:left; margin:0 0 12px; font-weight:700;
+    padding-left:0; text-indent:0;
+  }
+  .tocgrp{
+    font-family:var(--sans); font-size:6.9pt; letter-spacing:.16em; text-transform:uppercase;
+    color:var(--ink-3); margin:13px 0 5px !important; font-weight:700;
+  }
+  .tocgrp:first-of-type{margin-top:0 !important}
+  .toclist{list-style:none; margin:0; padding:0}
+  .toclist li{display:flex; align-items:baseline; gap:12px; margin:0 0 3px; font-size:9.6pt;
+    color:var(--ink-2)}
+  .tn{font-family:var(--mono); font-size:7.6pt; color:var(--accent); min-width:16px;
+    text-align:right; flex:none}
+
+  /* ---------- system diagram ---------- */
+  .sys{margin:14px 0 6px}
+  .sysrow{display:flex; gap:5px}
+  .sysrow .box{flex:1; text-align:center; font-family:var(--mono); font-size:7.2pt;
+    padding:7px 0; border:1px solid var(--rule); background:var(--wash); color:var(--ink)}
+  .syslink{display:flex; gap:5px; height:14px}
+  .syslink span{flex:1; display:flex; justify-content:center; align-items:stretch}
+  .syslink span::after{content:""; display:block; width:1px; background:var(--rule)}
+  .sysbus{text-align:center; font-family:var(--mono); font-size:7.6pt; padding:8px 0;
+    border:1.6px solid var(--accent); background:var(--wash-2); color:var(--accent); font-weight:700}
+
+  /* ---------- layout figures ---------- */
+  .seg{margin:0 0 12px}
+  .seglab{font-family:var(--sans); font-size:6.9pt; letter-spacing:.13em; text-transform:uppercase;
+    color:var(--ink-3); margin:0 0 4px; font-weight:700}
+  .seglab em{font-style:normal; color:var(--ink)}
+  .segrow{display:flex; gap:4px}
+  .grp{flex:1; border:.7px solid var(--rule); background:none; padding:3px 3px 4px; min-width:0}
+  .grp.fill{background:var(--wash-2); border:1.6px solid var(--accent)}
+  .grp.blk{border:1.6px dashed var(--ink-3)}
+  .gname{font-family:var(--mono); font-size:6.4pt; color:var(--ink-3);
+    text-align:center; margin-bottom:3px; white-space:nowrap; overflow:hidden}
+  .grp.fill .gname{color:var(--ink); font-weight:700}
+  .cells{display:flex; gap:2px}
+  .cells span{flex:1; min-width:0; font-family:var(--mono); font-size:6.4pt; text-align:center;
+    padding:4px 0; background:none; border:.5px solid var(--hair); color:var(--ink-3)}
+  .cells span.on{background:var(--accent); border-color:var(--accent); color:var(--paper); font-weight:700}
+  .grp.fill .cells span{background:var(--paper); border-color:var(--accent); color:var(--accent)}
+  .cells span.slot{border:1.4px dashed var(--ink-3); color:var(--ink)}
+  .seglegend{font-family:var(--sans); font-size:6.9pt; color:var(--ink-3);
+    margin:6px 0 0; display:flex; gap:20px; flex-wrap:wrap}
+  .seglegend .sw{display:inline-block; width:18px; height:8px; vertical-align:0; margin-right:5px}
+  .seglegend .sw.f{background:var(--accent); border:.7px solid var(--accent)}
+  .seglegend .sw.d{border:1.4px dashed var(--ink-3)}
+
+  .memrow{display:flex; gap:2px; margin:3px 0; font-family:var(--mono); font-size:7.2pt}
+  .memrow .lab{width:58px; color:var(--ink-3); flex:none; text-align:right; padding-right:8px; line-height:2.2}
+  .cell{flex:1; padding:5px 0; text-align:center; background:none; color:var(--ink-3);
+    border:.5px solid var(--hair)}
+  .cell.on{background:var(--accent); color:var(--paper); border-color:var(--accent); font-weight:700}
+  .cell.off{background:none; color:var(--ink-3); border-color:var(--hair)}
+
+  @media (max-width:820px){
+    body{padding:12px 7px 50px}
+    .sheet{padding:0.45in 0.4in 0.35in; min-height:0}
+    .part .ptitle{font-size:16pt}
+    h1{font-size:18pt}
+  }
+
+  @page{ size:letter; margin:0.8in 0.95in; }
+  @media print{
+    body{background:#fff; padding:0; font-size:10pt}
+    .sheet{border:none; margin:0; padding:0; min-height:0; max-width:none;
+      break-after:page; page-break-after:always}
+    .sheet:last-child{break-after:auto; page-break-after:auto}
+    .runhead,.folio{display:none}
+    pre,th,tr.hi td{background:#F2F4F7 !important}
+    table{break-inside:avoid}
+  }
+/* ---- pagination override: flex sheets cannot fragment in WeasyPrint ---- */
+@media print{
+  @page{
+    size:letter; margin:0.85in 0.95in 0.75in;
+    @top-left{
+      content:"Bank-Isolated KV Placement \00b7  LLaMA Decode";
+      font-family:"Helvetica Neue",Helvetica,Arial,sans-serif; font-size:6.6pt;
+      letter-spacing:.15em; text-transform:uppercase; color:#77808D;
+      border-bottom:.5px solid #BEC5CE; width:100%; padding-bottom:5px; margin-bottom:16px;
+    }
+    @bottom-right{
+      content:counter(page);
+      font-family:"Helvetica Neue",Helvetica,Arial,sans-serif; font-size:7.2pt;
+      letter-spacing:.1em; color:#77808D; border-top:.5px solid #DFE2E7;
+      width:100%; text-align:right; padding-top:6px;
+    }
+  }
+  @page:first{ @top-left{content:none} }
+  body{background:#FBFAF6}
+  .sheet{
+    background:transparent; display:block; min-height:0; border:none; margin:0; padding:0; max-width:none;
+    break-after:auto; page-break-after:auto;
+  }
+  /* title page stands alone; thereafter break only at part dividers */
+  .sheet:first-of-type{break-after:page; page-break-after:always}
+  .part{break-before:page; page-break-before:always; break-after:avoid}
+  .sheet:nth-of-type(2) .part{break-before:auto; page-break-before:auto}
+  .sheet > .body{display:block}
+  .runhead,.folio{display:none !important}
+  h2,h3{break-after:avoid; page-break-after:avoid}
+  .lede{break-after:avoid}
+  pre,table,.tablewrap,figure{break-inside:avoid; page-break-inside:avoid}
+  .abstract,.toc{break-inside:avoid}
+}
+</style>
+<body>
+
+<!-- ================= PAGE 1 ================= -->
+<section class="sheet">
+<div class="body">
+
+<div class="titleblock">
+  <p class="doctype">Technical Report</p>
+  <h1>Bank-Isolated KV Placement for LLM Decode</h1>
+  <p class="subtitle">Where a paged KV cache lands in DRAM, and what that placement costs the memory system</p>
+  <p class="byline">ONNXim + Ramulator2 &middot; HBM3 @ 6.4 Gbps, 16 ch &times; 2 pch &times; 4 bg &times; 4 bank<br>
+  1 KB row &middot; 32 B request &middot; 4 cores &times; 128&times;128 systolic, fp16<br>
+  LLaMA-2 7B, one transformer block, decode &middot; 128 Azure production requests</p>
+</div>
+
+<div class="abstract">
+<h2>Abstract</h2>
+
+<p>A decoding step presents the memory system with two streams of very different character. The weight stream is read once per step for the entire batch and is fixed in size, 405 MB for one LLaMA-2 7B block whether the batch holds one request or a hundred. The KV cache stream is read once per token resident in the batch, and its addresses are produced by a paging allocator rather than by a static layout. On a batch of 128 production requests the KV stream is <strong>90% of DRAM traffic</strong>, which makes the physical placement of the KV cache the dominant influence on how the memory system behaves.</p>
+
+<p>We characterise KV placement on a cycle-level model of an NPU and an HBM3 controller, separating the weight, KV and activation streams at the controller so each is measured on its own. The layout paged-attention systems use &mdash; sixteen-token pages holding every head, with each head's slice 4 KB long &mdash; achieves a <strong>79.4%</strong> row-buffer hit rate and runs the batch in 24.13M DRAM cycles. A layout that keeps each head's context contiguous achieves <strong>70.0%</strong>, the worst hit rate we measure, and runs the same batch <strong>1.36&times; faster</strong>. Row-buffer hit rate therefore does not order these layouts by speed. The reason is that the higher hit rate is produced by <em>concentration</em>: four cores working adjacent heads share a row, and four adjacent heads occupy exactly one bank, so sharing a row means sharing a bank. Counting distinct banks a channel touches per 2,000-cycle window, the concentrated layout reaches a median of 8 of 32 against 27 for the contiguous one, and with a quarter of the banks carrying the traffic a row switch has no other open row to hide behind.</p>
+
+<p>The two layouts are endpoints of a single axis, the number of bytes of one head that stay contiguous, and the axis has an interior point neither of them occupies. Choosing that unit to be exactly one DRAM row-stripe places the head index on the bank-select bits, giving each head a private bank: <strong>91.9%</strong> KV row hit, 47% fewer activations than the block-major layout and 61% fewer than the contiguous one, for identical bytes moved. Its cost is that a bank-confined stream cannot overlap its own row switch, so it runs at about 55% of a bank's duty; two banks per head recovers most of the bandwidth while keeping most of the locality.</p>
+
+<p>Two limits are worth stating with the result. Raising the number of concurrently streaming heads &mdash; by adding cores, or by interleaving a core's outstanding loads &mdash; reliably buys bandwidth and reliably costs locality, because every mechanism we tried for it also shortens the run a stream pulls from each row; no configuration measured reaches 90% on both. And the placement assumes a linear address mapping in which the bank index is a contiguous field; a controller that hashes other address bits into that field would scramble the head-to-bank assignment, so the timing ratios are conditional on the mapper used.</p>
+</div>
+
+<div class="toc">
+<h2>Contents</h2>
+<p class="tocgrp">Part I &mdash; What decode asks of DRAM</p>
+<ul class="toclist">
+<li><span class="tn">1</span><span>Two streams, and why only one can be placed</span></li>
+<li><span class="tn">2</span><span>What a row visit costs</span></li>
+</ul>
+<p class="tocgrp">Part II &mdash; Placement</p>
+<ul class="toclist">
+<li><span class="tn">3</span><span>One axis: bytes of a head kept contiguous</span></li>
+<li><span class="tn">4</span><span>Putting the head index on the bank field</span></li>
+</ul>
+<p class="tocgrp">Part III &mdash; Method</p>
+<ul class="toclist">
+<li><span class="tn">5</span><span>Model, workload, and what is measured</span></li>
+</ul>
+<p class="tocgrp">Part IV &mdash; Results</p>
+<ul class="toclist">
+<li><span class="tn">6</span><span>The production batch</span></li>
+<li><span class="tn">7</span><span>Concurrency, and the isolation dial</span></li>
+<li><span class="tn">8</span><span>What holds, and what is not settled</span></li>
+</ul>
+</div>
+
+</div>
+<div class="folio">1</div>
+</section>
+
+<!-- ================= PAGE 2 ================= -->
+<section class="sheet">
+<div class="runhead"><span>Bank-Isolated KV Placement &middot; LLaMA Decode</span><span>&sect;1 Two streams</span></div>
+<div class="body">
+
+<div class="part"><span class="pnum">Part I</span><span class="ptitle">What decode asks of DRAM</span></div>
+
+<h2><span class="n">1</span>Two streams, and why only one can be placed</h2>
+
+<p class="lede">Weights are read once per step for the whole batch. The KV cache is read once per token in the batch. Only the second is placed by software.</p>
+
+<p>A decoding step runs the batch through the model's linear layers, then computes attention for each request against its own cached keys and values. The systolic array is weight-stationary: it holds one 128&times;128 tile of a weight matrix and streams every request's activations through that tile before replacing it. A weight byte therefore crosses the DRAM boundary <strong>exactly once per step</strong>, and the weight stream is 405 MB for one transformer block regardless of batch size &mdash; measured identically at batch 1, 8 and 128. Batching buys activation reuse inside the array, not weight reuse in DRAM.</p>
+
+<p>The KV cache behaves in the opposite way. Each request owns its cache, no part of it is shared, and every token of every request is read once per step. One token of one head is <code>head_dim &times; precision</code> = 256 B of keys and the same of values, so a batch holding 200,064 tokens reads <strong>3.3 GB of KV against 405 MB of weights</strong> in a single step. Weight traffic is a fixed cost amortised over the batch; KV traffic scales with it. That asymmetry is the economic argument for continuous batching, and it is also why placement matters for one stream and not the other.</p>
+
+<p>The addresses differ in kind as well as in volume. A weight tensor is laid out once at load time and its address list is identical on every step. A KV cache is <em>paged</em>: it is allocated in fixed-size blocks from a pool, and a request's blocks are wherever the allocator had space when the request arrived. The block table is the one part of the address stream that cannot be derived from configuration, which is why the measurements here drive a serving simulation rather than a synthetic pattern.</p>
+
+<p>Within a block, though, the layout is a free choice, and it is the choice this report is about. A block holds <em>B</em> tokens for <em>every</em> head, and how those heads are arranged inside it decides which addresses are adjacent &mdash; which in turn decides the longest contiguous run any traversal can produce. Nothing downstream lengthens a run. A scheduler can reorder requests but cannot re-neighbour them, and a memory controller can only exploit locality that placement already created.</p>
+
+<p>The phases are also separated in time, which matters when reading the measurements. In the linear layers the DRAM sees weights and activations finely interleaved, alternating at the granularity of individual requests. During attention it sees keys and values only, one request at a time, with that request's heads spread across the cores. On the production batch the attention phase is 96% of the step.</p>
+
+</div>
+<div class="folio">2</div>
+</section>
+
+<!-- ================= PAGE 3 ================= -->
+<section class="sheet">
+<div class="runhead"><span>Bank-Isolated KV Placement &middot; LLaMA Decode</span><span>&sect;2 What a row visit costs</span></div>
+<div class="body">
+
+<h2><span class="n">2</span>What a row visit costs</h2>
+
+<p class="lede">A bank has one row buffer, and the cost of missing it depends on which way it is missed.</p>
+
+<p>A DRAM bank cannot read a cell directly. To read anything it first <em>activates</em> a row, copying roughly a kilobyte of cells into the bank's sense amplifiers, which takes <code>tRCD</code> &mdash; 23 cycles in this configuration &mdash; during which that bank delivers nothing. Column reads then stream out of the open row cheaply, back to back. Before a different row can be activated the current one must be written back and the bitlines restored, another <code>tRP</code> of 23 cycles. The row buffer is a cache with exactly one line per bank, and in this configuration a channel has thirty-two of them.</p>
+
+<p>A request that does not hit the open row fails in one of two ways, and the two do not cost the same. If the bank is <em>closed</em>, the request pays one activate, and the precharge that closed the row was issued earlier, off the critical path. If the bank is <em>open on the wrong row</em>, the request pays a precharge and an activate back to back, with that bank's queue stalled behind it. A conflict is therefore roughly twice a miss, and the controller's precharge audit confirms the distinction is physical rather than bookkeeping: across a full run no precharge is ever left unfollowed by an activate, so a miss is not a wasted close but a close whose cost was successfully hidden.</p>
+
+<p>This gives the two metrics used throughout. <strong>Reads per activation</strong> measures how much of a row visit's fixed cost is amortised; a 1 KB row holds thirty-two 32 B requests, so thirty-two is a full row and anything less is waste. <strong>While-busy bandwidth</strong> measures how much data the bus carries during cycles when requests are actually outstanding, which separates the memory system's efficiency from the NPU's ability to keep it fed.</p>
+
+<p>One more quantity matters for what follows, and it is the one a hit rate cannot see. A bank in the middle of a row switch delivers nothing for <code>tRP</code> + <code>tRCD</code>, so whether the data bus stays busy depends on how many <em>other</em> banks hold open rows with work queued against them. A channel here has thirty-two banks; a placement that spreads its concurrent streams across many of them hides every row switch behind another bank's data, and a placement that concentrates them into a few has nothing to hide behind. We report this directly as <strong>banks active</strong>, the number of distinct banks a channel touches in a 2,000-cycle window.</p>
+
+<div class="tablewrap">
+<p class="tabcaption"><b>Table 1</b> The three outcomes and what each costs on the bank that serves it. Cycles are for the HBM3 timing set used here.</p>
+<table>
+<thead><tr><th>Outcome</th><th>Bank state on arrival</th><th>Commands</th><th>Approx. cost</th></tr></thead>
+<tbody>
+<tr class="hi"><td class="k">hit</td><td>open on the requested row</td><td>CAS</td><td class="good">data only</td></tr>
+<tr><td class="k">miss</td><td>closed</td><td>ACT + CAS</td><td>~23 cycles</td></tr>
+<tr><td class="k">conflict</td><td>open on a different row</td><td>PRE + ACT + CAS</td><td class="bad">~46 cycles, queue stalled</td></tr>
+</tbody>
+</table>
+</div>
+
+<p>A hit rate collapses the second and third rows into one number. Two placements with the same hit rate can differ by a factor of two in what those non-hits cost, and &sect;6 shows two that do.</p>
+
+</div>
+<div class="folio">3</div>
+</section>
+
+<!-- ================= PAGE 4 ================= -->
+<section class="sheet">
+<div class="runhead"><span>Bank-Isolated KV Placement &middot; LLaMA Decode</span><span>&sect;3 One axis</span></div>
+<div class="body">
+
+<div class="part"><span class="pnum">Part II</span><span class="ptitle">Placement</span></div>
+
+<h2><span class="n">3</span>One axis: bytes of a head kept contiguous</h2>
+
+<p class="lede">The placements are not alternatives. They are one formula evaluated at different points.</p>
+
+<p>Write the address of a KV element as a function of its head index and of the position that element occupies within that head's own stream. Every placement considered here, including block-major paging, is the same flattening:</p>
+
+<pre>addr(head, p) = (p / U) &times; (NH &times; U)  +  head &times; U  +  (p mod U)
+                &lfloor;&mdash; outer &mdash;&rfloor;              &lfloor;head&rfloor;      &lfloor;inner&rfloor;</pre>
+
+<p>with <em>NH</em> the number of KV heads and <strong><em>U</em> the number of bytes of one head that stay contiguous</strong> before the layout moves to the next head. Cut a head's stream into pieces of <em>U</em> bytes; piece <em>c</em> occupies slot <em>head</em> of the <em>c</em>-th group of <em>NH</em> pieces. One parameter, and the placements fall out of it.</p>
+
+<p>Because one token of one head is 256 B, <em>U</em> is the page block size measured in bytes. A sixteen-token block &mdash; the granularity paged-attention implementations commonly use &mdash; is <strong>4 KB of one head</strong>, after which the layout jumps to the next head and the current head's data resumes 128 KB later. We call this <em>block-major</em>. At the other extreme, giving each head its entire context contiguously is the limit <em>U</em> &rarr; &infin;: <code>p &lt; U</code> always, the outer term vanishes, and the expression reduces to <code>head &times; context + p</code>. We call this <em>head-major</em>.</p>
+
+<div class="tablewrap">
+<p class="tabcaption"><b>Table 2</b> The axis. A row-stripe is 16 KB in this configuration: one 1 KB row in each of the sixteen channels (&sect;4). Cycles are the production batch, four cores.</p>
+<table>
+<thead><tr><th><em>U</em></th><th>block size</th><th>placement</th><th>row-stripes per head</th><th>cycles</th></tr></thead>
+<tbody>
+<tr><td class="k">4 KB</td><td>16</td><td>block-major, 16-token pages</td><td class="bad">&frac14; &mdash; four heads share a row</td><td class="bad">24.13M</td></tr>
+<tr><td class="k">8 KB</td><td>32</td><td>&mdash;</td><td>&frac12;</td><td>24.16M</td></tr>
+<tr class="hi"><td class="k">16 KB</td><td>64</td><td><strong>bank-isolated, K = 1</strong></td><td class="good">1 &mdash; one head per row</td><td>23.22M</td></tr>
+<tr><td class="k">32 KB</td><td>128</td><td>bank-isolated, K = 2</td><td>2</td><td>18.88M</td></tr>
+<tr><td class="k">64 KB</td><td>256</td><td>&asymp; head-major</td><td>4</td><td>17.81M</td></tr>
+<tr class="rule"><td class="k">context</td><td>&mdash;</td><td>head-major</td><td>whole context</td><td class="good">17.68M</td></tr>
+</tbody>
+</table>
+</div>
+
+<p>Two consequences are worth stating before the mechanism. First, the interior points of this axis are reachable <strong>through the page-size parameter a paged KV cache already exposes</strong>. Block 64 and the bank-isolated placement of &sect;4 are the same addresses arrived at by two different arguments, and they measure 23,223,415 and 23,214,626 cycles, four hundredths of a percent apart on a model that is bit-deterministic. A sixteen-token page sits at the worst point on the axis for row locality.</p>
+
+<p>Second, the equivalence is specific to a model and a precision, since <em>U</em> is <code>B &times; head_dim &times; precision</code>: at int8 the same 16 KB is 128 tokens, and a model with 64-dimensional heads would need twice the block size for the same effect. <em>One row-stripe per head</em> is the portable statement of the result; <em>block 64</em> is what it happens to mean here.</p>
+
+</div>
+<div class="folio">4</div>
+</section>
+
+<!-- ================= PAGE 5 ================= -->
+<section class="sheet">
+<div class="runhead"><span>Bank-Isolated KV Placement &middot; LLaMA Decode</span><span>&sect;4 The head index on the bank field</span></div>
+<div class="body">
+
+<h2><span class="n">4</span>Putting the head index on the bank field</h2>
+
+<p class="lede">Choose <em>U</em> to be exactly one row-stripe and the layout formula stops being arithmetic: it becomes a bit-packing.</p>
+
+<p>The NPU hashes the channel out of the low address bits and hands the remaining address to the memory controller, whose linear <code>RoBaRaCoCh</code> mapper slices it from the bottom. For this configuration the fields land at fixed positions in the <em>global</em> address:</p>
+
+<pre>bits [0:5)    byte within the 32 B request
+bits [5:9)    channel            hashed away, 16 channels
+bits [9:14)   column             32 requests &times; 32 B = one 1 KB row per channel
+bits [14:19)  <b>bank slot</b>       pch(1) + bankgroup(2) + bank(2) = 32 banks
+bits [19:)    row</pre>
+
+<p>Two constants follow from that map. <strong>16 KB is 2<sup>14</sup></strong>, and a 16 KB contiguous run scatters its 512 requests thirty-two to a channel, where they differ only in the column field &mdash; so one such run is one row of one bank <em>in every channel</em>. That is what a row-stripe means here. <strong>512 KB is 2<sup>19</sup></strong>, thirty-two stripes, one per bank slot, after which the row index increments. Substituting <em>U</em> = 16 KB and <em>NH</em> = 32 into the formula of &sect;3 gives</p>
+
+<pre>addr = c &times; 2<sup>19</sup>  +  h &times; 2<sup>14</sup>  +  within        (within &lt; 2<sup>14</sup>, h &lt; 32)
+       &lfloor;&mdash; row &mdash;&rfloor;    &lfloor;&mdash; bank &mdash;&rfloor;   &lfloor;&mdash; column &mdash;&rfloor;</pre>
+
+<p>which writes the head index into exactly the bits the mapper reads as a bank. Nothing in the controller or the address mapper changes; the placement simply arranges for the head to <em>be</em> the bank.</p>
+
+<h3>A single element</h3>
+
+<p>Head 5, token 100, dimension 0, with sixteen-token blocks, so logical block 6 at offset 4:</p>
+
+<pre>p     = (6 &times; 16 + 4) &times; 256 B          = 25,600
+c     = 25,600 / 16,384 = 1              within = 9,216
+addr  = 1 &times; 524,288 + 5 &times; 16,384 + 9,216 = 615,424 = 0x96400
+
+        bits [14:19) = 5   &rarr;  bank slot 5   = the head index
+        bits [19:)   = 1   &rarr;  row 1         = the chunk index</pre>
+
+<p>Token 164 lands in bank 5, row 2; token 1,562 in bank 5, row 24. Head 6 at the same tokens occupies bank 6 and the same rows. A head walks its own bank one row at a time, and no other head can reach it.</p>
+
+</div>
+<div class="folio">5</div>
+</section>
+
+<!-- ================= PAGE 6 ================= -->
+<section class="sheet">
+<div class="runhead"><span>Bank-Isolated KV Placement &middot; LLaMA Decode</span><span>&sect;4 Two benefits, and a dial</span></div>
+<div class="body">
+
+<h3>Two benefits, which fail independently</h3>
+
+<p><strong>The row is full of one head.</strong> All thirty-two request slots of every row visit serve the head that opened it. A 4 KB unit fills eight of thirty-two, so three quarters of the cost of each activation is spent bringing in data for heads that are not being read. This benefit requires only <em>U</em> &ge; 16 KB, which block size 64 delivers on its own.</p>
+
+<p><strong>The head owns the bank.</strong> No other stream can close head 5's row, so a row visit ends when that head is finished with it rather than when a neighbour arrives. This benefit additionally requires the <em>alignment</em>: <em>U</em> exactly 2<sup>14</sup>, and the tensor base padded to a 512 KB boundary so the head bits are not rotated by wherever the allocator placed the tensor. Get <em>U</em> right and the base wrong and the first benefit survives while the second does not, which accounts for most of the gap between block-64's 86.1% row hit and the aligned placement's 91.9%.</p>
+
+<h3>The dial</h3>
+
+<p>Setting <em>U</em> = <em>K</em> &times; 16 KB gives each head <em>K</em> banks, with</p>
+
+<pre>bank = (h&times;K + c mod K + tile&times;stride) mod 32
+row  = (c / K) &times; S + h / (32/K)          S = heads sharing a bank set</pre>
+
+<p>At <em>K</em> = 1 a head owns one bank and its consecutive rows are in that same bank, so the stream must close each row before opening the next and cannot overlap its own switch. At <em>K</em> = 2 a head alternates between two banks, so the second delivers while the first precharges, at the price that thirty-two heads over sixteen bank pairs means two heads share each pair, separated in the row field. <em>K</em> trades isolation for intra-stream overlap, and &sect;7 measures the trade.</p>
+
+<p>Two further placements follow from the same reasoning and are measured in &sect;6. Keys and values of one head derive from the same offset and therefore share a bank, and the attention tile issues them back to back, so a head's stream contends with itself; displacing the value tensor by sixteen bank slots separates them. And because a 16 KB chunk is four sixteen-token blocks, a fragmenting allocator can split it across rows; running the placement with sixty-four-token blocks makes one physical block exactly one chunk and removes that dependence on allocator behaviour.</p>
+
+<p>The geometry constants are parameters rather than literals. The two numbers the placement needs &mdash; the size of a row-stripe and the number of bank slots &mdash; are read from the configuration rather than compiled in, because a different DRAM organisation puts the bank field at different address bits. Porting the placement to another memory is a matter of recomputing those two values from its row size, channel count and bank hierarchy; the formula is unchanged.</p>
+
+</div>
+<div class="folio">6</div>
+</section>
+
+<!-- ================= PAGE 7 ================= -->
+<section class="sheet">
+<div class="runhead"><span>Bank-Isolated KV Placement &middot; LLaMA Decode</span><span>&sect;5 Model, workload, measurement</span></div>
+<div class="body">
+
+<div class="part"><span class="pnum">Part III</span><span class="ptitle">Method</span></div>
+
+<h2><span class="n">5</span>Model, workload, and what is measured</h2>
+
+<p class="lede">A cycle-level NPU driving a cycle-level DRAM, with the three streams separated at the controller.</p>
+
+<p>The NPU is ONNXim configured as four 128&times;128 weight-stationary systolic cores at 1 GHz with a three-deep tile pipeline; the memory system is Ramulator2 with an HBM3 device at 6.4 Gbps, sixteen channels of two pseudochannels &times; four bank groups &times; four banks, 1 KB rows, 32 B requests, 819.2 GB/s of peak bandwidth. Attention runs head-parallel: head <em>h</em> is assigned to core <em>h</em> mod 4, and one request's attention completes before the next begins. The model is LLaMA-2 7B, one transformer block, fp16, with a paged KV cache.</p>
+
+<p>The workload is one decode step over <strong>128 requests drawn from the Azure LLM Inference Dataset</strong>, contexts from 169 to 5,305 tokens, 200,064 tokens of cache in total, which is where the 90% KV share comes from. A second, eight-request workload is used where a weight-dominated mix is informative; it moves less, and the ordering of the placements rather than the magnitudes is what transfers.</p>
+
+<p><strong>Block-major</strong> here means the arrangement a paged KV cache produces: a page holds <em>B</em> tokens of every head, so within a page one head's keys occupy <em>B</em> &times; 256 B contiguously and the next head follows immediately. Implementations may subdivide a head's slice further for vectorised access, and may lay keys and values out differently from one another; that finer structure is not modelled here, and it is orthogonal to the page-and-head nesting this report varies. Keys and values are modelled as two tensors with identical internal layout at separate bases.</p>
+
+<h3>Separating the streams</h3>
+
+<p>Row-buffer statistics are meaningless if the streams are mixed, and they cannot be separated by address range alone: activation tensors occupy the same region as the KV pool and run at about 37% row hit, so averaging them into the KV class understates it by several points. Each memory request therefore carries the operand identifier of the instruction that issued it &mdash; query, key, value, weight, output &mdash; through the NPU, the interconnect and into the controller, which reports hit, miss and conflict counts for weights, KV and activations separately. The same identifier is written into the address traces, so offline analysis needs no threshold either.</p>
+
+<p>One transport detail affects the measurement enough to be worth naming. The stock model fans a core's single request queue across sixteen injection ports and the interconnect drains a channel's inputs round-robin across those ports, so a core's requests arrive at one channel locally reordered. A bank-hopping stream does not notice; a bank-confined stream has its consecutive rows interleaved and the controller ping-pongs between them. Injecting on the port that serves the request's channel &mdash; one queue per core-channel pair, which is what a crossbar gives a single flow &mdash; reduced row conflicts by 35 to 45% on every placement, and all results here use it.</p>
+
+<h3>Validation</h3>
+
+<p>The model is deterministic: identical configurations produce bit-identical cycle counts, so every difference reported is real and the only question is whether it is large. The independent arrival of block-64 and the <em>K</em> = 1 placement at the same runtime, from two unrelated arguments, is a useful cross-check on the address generation.</p>
+
+<p>Five address-generation defects were found and fixed in the simulator during this work, and they are worth naming because of what they have in common. Each attention head read KV head 0 rather than its own; long contexts re-read their first chunk once per tile; the KV-concat tiles were marked as skipped, so the cache was never written; a scratchpad bank rotation flushed a bank that a live tile still referenced; and the channel hash exited silently for channel counts other than 16, 32 and 64. <strong>None of these changes the number of addresses issued</strong>, which is what a count-based validation checks, and all of them produce plausible-looking results. The check that catches them is a controlled before-and-after on a fixed workload after any change to address generation.</p>
+
+</div>
+<div class="folio">7</div>
+</section>
+
+<!-- ================= PAGE 8 ================= -->
+<section class="sheet">
+<div class="runhead"><span>Bank-Isolated KV Placement &middot; LLaMA Decode</span><span>&sect;6 The production batch</span></div>
+<div class="body">
+
+<div class="part"><span class="pnum">Part IV</span><span class="ptitle">Results</span></div>
+
+<h2><span class="n">6</span>The production batch</h2>
+
+<p class="lede">Row-buffer hit rate does not order the placements by speed, and the reason is legible in the miss and conflict columns.</p>
+
+<div class="tablewrap">
+<p class="tabcaption"><b>Table 3</b> 128 Azure requests, one decode step, four cores. KV figures are operand-tagged. The weight stream sits at 74% row hit in every row and is omitted. Cycles are DRAM cycles at 3.2 GHz.</p>
+<table>
+<thead><tr><th>Placement</th><th>KV hit</th><th>miss</th><th>confl</th><th>KV rd / ACT</th><th>ACT / ch</th><th>cycles</th><th>while-busy</th></tr></thead>
+<tbody>
+<tr><td class="k">block-major, 16-token pages</td><td>79.4%</td><td class="good">4.6%</td><td class="bad">12.0%</td><td>4.9</td><td>1.70M</td><td class="bad">24.13M</td><td class="bad">68.7%</td></tr>
+<tr class="hi"><td class="k">head-major</td><td class="bad">70.0%</td><td class="bad">22.1%</td><td class="good">7.9%</td><td class="bad">3.3</td><td class="bad">2.31M</td><td class="good">17.68M</td><td class="good">98.5%</td></tr>
+<tr class="rule"><td class="k">bank-isolated, K = 1</td><td class="good">91.9%</td><td class="good">3.2%</td><td class="good">4.9%</td><td class="good">12.5</td><td class="good">0.90M</td><td>23.21M</td><td class="bad">71.5%</td></tr>
+<tr><td class="k">bank-isolated, K = 2</td><td class="good">83.2%</td><td>11.9%</td><td class="good">4.9%</td><td>6.0</td><td>1.46M</td><td>18.88M</td><td>90.2%</td></tr>
+<tr class="hi"><td class="k">K = 2, V displaced, block 64</td><td>82.2%</td><td>14.6%</td><td class="good">3.2%</td><td>5.6</td><td>1.53M</td><td class="good">18.12M</td><td class="good">94.4%</td></tr>
+</tbody>
+</table>
+</div>
+
+<p>Head-major runs the batch 1.36&times; faster than block-major paging while holding nine points <em>less</em> row locality and issuing 36% <em>more</em> activations. Each placement has a characteristic failure, and naming them explains the table.</p>
+
+<p><strong>Block-major's high hit rate and its low bandwidth are the same fact.</strong> A row holds four heads' 4 KB slices, and with head-parallel assignment the four cores work on heads <em>h</em> through <em>h</em>+3 at the same time, so one activation serves four cores at once. That cooperation is where its 79.4% comes from: it is a shared hit rate rather than a private one. But four adjacent heads occupy 4 &times; 4 KB = 16 KB contiguous, which is <em>exactly one bank slot</em> &mdash; so sharing a row means sharing a bank. Counting distinct banks touched per 2,000-cycle window on one channel, block-major reaches a <strong>median of 8 of 32</strong>, the separate key and value tensors and the tiles in flight accounting for the multiple of the single slot the arithmetic predicts. With a quarter of the banks carrying all of the traffic, a row switch has nothing to hide behind: those banks go into precharge and the bus idles. It measures 68.7% while-busy, and its non-hits are the expensive kind, 12.0% conflicts against head-major's 7.9%.</p>
+
+<p><strong>Head-major spreads instead of sharing.</strong> Its stream hops to a different bank at every row boundary, so the next row's activate issues on an idle bank while the current row is still delivering, and the same window measurement finds a <strong>median of 27 of 32</strong> banks active. Some bank is always ready, which is the 98.5%. The price is that nothing is shared: it opens the most rows of any placement and hits the fewest of them.</p>
+
+<p>The two metrics answer different questions. A hit rate asks whether the row a request wants was already open; while-busy bandwidth asks whether <em>any</em> bank was ready to deliver. Concentration raises the first and destroys the second, which is why the placements do not order the same way under the two.</p>
+
+<p><strong>The isolated placement fails least often</strong> &mdash; 4.9% conflicts, 3.2% misses, 12.5 KV reads per activation against block-major's 4.9 &mdash; and is nevertheless slower than head-major, for the same reason in its sharpest form: at a median of 4 banks active it has the least parallelism of the three, because a head's keys and values share its bank and a stream confined to one bank cannot overlap its own row switch. At <strong>0.90M activations per channel against 1.70M and 2.31M for the same bytes moved</strong>, it is the placement to choose when the objective is row-buffer energy rather than time.</p>
+
+<p>The last row is the joint operating point: two banks per head, values displaced to a separate bank, sixty-four-token blocks. It holds <strong>82.2% hit, 3.2% conflicts and 94.4% while-busy, 1.33&times; against block-major paging</strong> &mdash; within 2.5% of the fastest placement while keeping twelve points more locality and a third fewer activations than it.</p>
+
+</div>
+<div class="folio">8</div>
+</section>
+
+<!-- ================= PAGE 9 ================= -->
+<section class="sheet">
+<div class="runhead"><span>Bank-Isolated KV Placement &middot; LLaMA Decode</span><span>&sect;7 Concurrency and the dial</span></div>
+<div class="body">
+
+<h2><span class="n">7</span>Concurrency, and the isolation dial</h2>
+
+<p class="lede">Isolation requires that concurrently streaming heads not outnumber banks.</p>
+
+<p>Concurrent streams are cores times tile-pipeline depth &mdash; twelve at four cores, forty-eight at sixteen &mdash; against thirty-two bank slots per channel. The dial and the core count therefore interact, and the interaction has a threshold.</p>
+
+<div class="tablewrap">
+<p class="tabcaption"><b>Table 4</b> KV row hit against concurrency. The eight-request rows are a weight-dominated workload and move less; the ordering is what transfers.</p>
+<table>
+<thead><tr><th>Configuration</th><th>streams / banks</th><th>block 16</th><th>head-major</th><th>K = 1</th><th>K = 2</th></tr></thead>
+<tbody>
+<tr><td class="k">1 core, 8 req</td><td>3 / 32</td><td>76.7%</td><td>78.4%</td><td class="good">92.0%</td><td class="good">93.8%</td></tr>
+<tr class="hi"><td class="k">4 cores, production batch</td><td>12 / 32</td><td>79.4%</td><td class="bad">70.0%</td><td class="good">91.9%</td><td>83.2%</td></tr>
+<tr><td class="k">16 cores &times; 32&times;32</td><td class="bad">48 / 32</td><td>68.8%</td><td>74.1%</td><td class="bad">66.3%</td><td>73.3%</td></tr>
+</tbody>
+</table>
+</div>
+
+<p>At sixteen cores the placement loses most of its locality &mdash; 66% row hit &mdash; and we can say what does <em>not</em> cause it. Conflicts stay at 5.0%, identical to four cores, so the bank isolation has not broken and heads are not evicting one another; the losses are all misses. Nor is it the array, since a sixteen-core run at the full 128&times;128 width behaves the same way. What collapses is the run: KV reads per activation fall from 12.5 to 3.0, so each row is opened and reopened many times over. Higher concurrency fragments each stream's row visits, and the mechanism is unresolved. The same signature appears when concurrency is raised without adding cores, by interleaving a core's outstanding loads across tiles: bandwidth rises from 71.5% to 78.5%, reads per activation fall from 12.5 to 5.7, row hit falls from 91.9% to 85.1%, and end-to-end time does not move.</p>
+
+<p>The pattern across all three attempts is consistent enough to state as a finding: <strong>on this machine every mechanism that raises bank-level parallelism also shortens the run a stream pulls from each row</strong>, so bandwidth and locality trade rather than compose. Whether that coupling is fundamental or an artifact of how the attention operator issues its loads is the open question, and the quantity to attack is run length rather than bank count &mdash; even the best placement consumes only 12.5 of a row's 32 request slots per visit.</p>
+
+<p>In the other direction, at one core the dial costs almost nothing, and <em>K</em> = 2 is the better setting at both ends: with three streams in flight the bank-mate sharing never materialises, while the second bank still buys the overlap.</p>
+
+<h3>What isolation costs, and why the controller cannot pay it</h3>
+
+<p>A bank-confined stream pays the row cycle in series: activate, deliver 64 cycles of data, close, precharge. That is roughly 117 cycles per 64 cycles of data, about 55% duty on its own bank, and the only thing that can fill the gap is a <em>different</em> bank &mdash; the stream's own second bank at <em>K</em> &ge; 2, or another head's.</p>
+
+<p>This is not a scheduling failure, and the experiment that settles it is worth reporting as a negative result. We added a scheduler tier that issues precharge and activate ahead of older ready row hits, on the argument that those commands occupy only the command bus and that the measured 62-cycle precharge-to-activate gap was mostly queueing slack above a 23-cycle floor. It worked exactly as designed: the gap fell to <strong>28.5 cycles</strong>. Runtime at one core changed by <strong>127 cycles out of 7.4 million</strong>, and at four cores the tier was 3.2% <em>worse</em>, because preempting row hits to issue activates costs more continuity than it recovers. When every queued request targets a bank in the middle of its own row switch, a scheduler has nothing left to reorder.</p>
+
+<p>The same isolation applied to the weight stream is likewise inert: 73.9% to 73.1% row hit, conflicts 4.6% to 3.5%, runtime within 0.2%. The weight stream's four-core loss is 21.5% misses against only 4.6% conflicts &mdash; a stream meeting its own row switches, not eviction by neighbours &mdash; and it already serves a full queue at 99.4%, so there is no bandwidth there to recover.</p>
+
+</div>
+<div class="folio">9</div>
+</section>
+
+<!-- ================= PAGE 11 ================= -->
+<section class="sheet">
+<div class="runhead"><span>Bank-Isolated KV Placement &middot; LLaMA Decode</span><span>&sect;8 What holds, and what is not settled</span></div>
+<div class="body">
+
+<h2><span class="n">8</span>What holds, and what is not settled</h2>
+
+<p class="lede">One statement transfers across every configuration measured. Four do not, and one of them bounds the headline number.</p>
+
+<p>Across one, four and sixteen cores, page sizes from 16 to 256 tokens, a weight-dominated and a KV-dominated workload, and a speculative-decoding workload, one statement holds: <strong>the number of DRAM activations required to read a KV cache is set by how many bytes of a single head stay contiguous, and it is minimised when that unit is one row-stripe.</strong> Activation counts are a property of the address stream and of the row geometry, and nothing in the scheduler or the queueing changed them by more than a few percent in any experiment here.</p>
+
+<p><strong>The runtime figures are scoped to one address mapping.</strong> All results use a linear row-bank-column mapper, in which the bank index is a contiguous field of the physical address &mdash; the arrangement &sect;4 relies on. Controllers that hash other address bits into the bank field are common, and such a mapper would scramble the head-to-bank assignment this placement constructs, changing both the locality it achieves and the bank parallelism available to the placements it is compared against. We do not have a validated implementation of such a hashing scheme, and the ratios in Table 3 should be read as conditional on a linear mapper rather than as properties of the placements alone. Establishing how each placement behaves under a reference hashing scheme is the single most useful extension of this work.</p>
+
+<p class="lede">Four things this model cannot settle, and one inequality that replaces a number.</p>
+
+<p><strong>Energy is reported as a ratio, not a figure.</strong> Row-activation counts are measured and differ by more than a factor of two between placements moving identical bytes, and activation energy is a real and substantial share of DRAM energy. But converting that into joules needs per-activation and per-bit constants for this device that we do not have, and the absolute figure would inherit all of their error. The defensible statement is the one the measurement supports directly: for the same traffic, the bank-isolated placement issues 0.90M activations per channel against 1.70M and 2.31M, and whatever a row activation costs on this part, it costs that much less often.</p>
+
+<p><strong>Attention concurrency is modelled differently than a GPU serving stack.</strong> This simulator runs attention one request at a time, so at four cores the twelve concurrent streams are twelve heads of a single request. A paged-attention kernel on a GPU processes many requests concurrently across streaming multiprocessors, which produces a different stream population over the same banks. Bank isolation is designed against the former; the mapping from streams to banks under the latter is outside what this model can answer, and it is the first thing to check before applying the result to a GPU.</p>
+
+<p><strong>Allocator behaviour is modelled, not observed.</strong> A 16 KB chunk spans four sixteen-token blocks, so a fragmenting allocator can split a row-stripe across rows and erode the first of the two benefits in &sect;4. Running at block 64 removes the dependence entirely, which is the practical reason to prefer it over the aligned placement at block 16.</p>
+
+<p><strong>Two speculative-decoding observations are weakly supported.</strong> Placement is nearly irrelevant there &mdash; head-major and <em>K</em> = 2 finish within 0.6% &mdash; but KV is only 7% of that workload's traffic in the configuration measured, and the write-after-write traffic that speculative rollback produces has not been characterised in its own right.</p>
+
+<h3>Reproduction</h3>
+
+<p>The placements are runtime parameters rather than builds. The KV layout, the banks-per-head dial, the value displacement, the bank-chunk and bank-count geometry, the per-channel injection ordering and the stream tagging are all environment variables defaulting to stock behaviour, so an unmodified run reproduces block-major paging exactly. Cycle-stamped DRAM address traces for the three principal placements &mdash; 122,117,889 requests each, identical bytes, carrying arrival cycle, decoded bank and row, and the operand tag &mdash; are retained alongside the simulator logs.</p>
+
+</div>
+<div class="folio">11</div>
+</section>
+
+</body>
+</html>

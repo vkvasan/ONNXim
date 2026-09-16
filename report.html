@@ -1,0 +1,852 @@
+<title>NPU-HBM Access-Pattern Analysis for LLM Decode</title>
+<style>
+  :root{
+    --ground:#6B7381;
+    --paper:#FBFAF6;
+    --ink:#18222E;
+    --ink-2:#3F4B5A;
+    --ink-3:#77808D;
+    --rule:#BEC5CE;
+    --hair:#DFE2E7;
+    --accent:#2B4C7E;
+    --wash:#EFF2F6;
+    --wash-2:#E4E9F0;
+    --serif:"Palatino Linotype","Book Antiqua",Palatino,"URW Palladio L","Liberation Serif","Times New Roman",serif;
+    --sans:"Helvetica Neue",Helvetica,Arial,"Liberation Sans",sans-serif;
+    --mono:ui-monospace,"SF Mono",Menlo,Consolas,"DejaVu Sans Mono",monospace;
+  }
+  @media (prefers-color-scheme:dark){
+    :root:not([data-theme="light"]){ --ground:#1B2028; }
+  }
+  :root[data-theme="dark"]{ --ground:#1B2028; }
+
+  *{box-sizing:border-box}
+  body{
+    background:var(--ground); color:var(--ink);
+    font-family:var(--sans); font-size:9.9pt; line-height:1.5;
+    margin:0; padding:30px 14px 80px;
+  }
+
+  .sheet{
+    background:var(--paper); color:var(--ink);
+    width:100%; max-width:8.5in; min-height:10.9in;
+    margin:0 auto 22px; padding:0.78in 0.95in 0.55in;
+    border:1px solid #565E6B;
+    display:flex; flex-direction:column;
+  }
+  .sheet > .body{flex:1}
+
+  .runhead{
+    display:flex; justify-content:space-between; align-items:baseline;
+    font-family:var(--sans); font-size:6.8pt; letter-spacing:.16em;
+    text-transform:uppercase; color:var(--ink-3);
+    border-bottom:.5px solid var(--rule); padding-bottom:6px; margin-bottom:30px;
+  }
+  .folio{
+    font-family:var(--sans); font-size:7.2pt; letter-spacing:.1em; color:var(--ink-3);
+    text-align:right; margin-top:28px; padding-top:7px; border-top:.5px solid var(--hair);
+  }
+
+  /* ---------- memo header ---------- */
+  .titleblock{text-align:left; margin:0 0 26px; padding-bottom:0}
+  .doctype{
+    font-family:var(--sans); font-size:7pt; letter-spacing:.24em; text-transform:uppercase;
+    color:var(--accent); margin:0 0 22px; padding-bottom:7px;
+    border-bottom:2px solid var(--accent);
+  }
+  h1{
+    font-family:var(--sans); font-size:19pt; line-height:1.2; font-weight:700;
+    letter-spacing:-.022em; margin:0 0 12px; max-width:34ch;
+  }
+  .subtitle{
+    font-family:var(--sans); font-size:9.6pt; font-style:normal; line-height:1.4;
+    color:var(--ink-2); margin:0 0 20px; max-width:52ch;
+  }
+  .byline{
+    font-family:var(--mono); font-size:7.6pt; line-height:1.9; color:var(--ink-2);
+    margin:0; padding:9px 0 0; border-top:.5px solid var(--hair);
+  }
+
+  /* ---------- abstract ---------- */
+  .abstract{margin:24px 0 0; padding:0}
+  .abstract h2{
+    font-family:var(--sans); font-size:7pt; letter-spacing:.2em; text-transform:uppercase;
+    color:var(--ink-3); text-align:left; margin:0 0 9px; font-weight:700;
+  }
+  .abstract p{
+    margin:0 0 8px; font-size:9.3pt; line-height:1.52; text-align:left;
+    padding-left:1.5em; border-left:1px solid var(--rule);
+  }
+
+  /* ---------- headings, hung numbers ---------- */
+  h2{
+    font-family:var(--sans); font-size:11pt; font-weight:700; letter-spacing:-.012em;
+    margin:30px 0 9px; padding-left:2.4em; text-indent:-2.4em; line-height:1.28;
+    page-break-after:avoid;
+  }
+  h2:first-child{margin-top:0}
+  h2 .n{
+    font-family:var(--mono); font-weight:400; font-size:10pt; color:var(--accent);
+    display:inline-block; width:2.4em; text-indent:0;
+  }
+  h3{
+    font-family:var(--sans); font-size:9pt; font-weight:700; font-style:normal;
+    letter-spacing:.02em; margin:20px 0 5px; page-break-after:avoid;
+  }
+  p{margin:0 0 9px; text-align:left; hyphens:none}
+  p + p{text-indent:0}
+  strong{font-weight:700}
+  em{font-style:italic}
+  code{font-family:var(--mono); font-size:.85em}
+  .lede{color:var(--ink-2); font-size:10.4pt; line-height:1.5}
+
+  /* ---------- displays ---------- */
+  pre{
+    font-family:var(--mono); font-size:7.9pt; line-height:1.6;
+    background:none; border:none; border-left:2px solid var(--accent);
+    padding:9px 0 9px 15px; background:var(--wash); margin:14px 0 16px; overflow-x:auto; color:var(--ink-2);
+  }
+  pre b{color:var(--ink); font-weight:700}
+  pre .g,pre .c{color:var(--ink); font-weight:700}
+
+  figure{margin:18px 0; page-break-inside:avoid}
+  figcaption, .tabcaption{
+    font-family:var(--sans); font-size:7.8pt; line-height:1.42; color:var(--ink-2); margin-top:8px;
+  }
+  .tabcaption{margin:0 0 6px}
+  figcaption b, .tabcaption b{
+    font-weight:700; color:var(--ink); letter-spacing:.02em; margin-right:.45em; text-transform:none;
+  }
+
+  /* ---------- tables: monochrome, hairline ---------- */
+  .tablewrap{overflow-x:auto; margin:14px 0 18px; page-break-inside:avoid}
+  table{
+    border-collapse:collapse; width:100%;
+    font-family:var(--mono); font-size:7.9pt; font-variant-numeric:tabular-nums;
+    border-top:1.6px solid var(--accent); border-bottom:1.6px solid var(--accent);
+  }
+  th{
+    font-family:var(--sans); font-weight:700; font-size:6.9pt; letter-spacing:.1em;
+    text-transform:uppercase; color:var(--accent); text-align:right; padding:7px 10px 6px;
+    border-bottom:.7px solid var(--rule); background:var(--wash); white-space:nowrap;
+  }
+  th:first-child, td:first-child{text-align:left}
+  td{padding:4.5px 10px; text-align:right; white-space:nowrap; color:var(--ink-2)}
+  tbody tr:first-child td{padding-top:7px}
+  tbody tr:last-child td{padding-bottom:7px}
+  td.k{color:var(--ink); font-family:var(--sans); font-size:8.6pt}
+  td.good{color:var(--accent); font-weight:700}
+  td.bad{color:var(--ink-3); font-weight:400}
+  tr.hi td{background:var(--wash); box-shadow:inset 2px 0 0 var(--accent)}
+  tr.hi td:first-child{padding-left:12px}
+  tr.rule td{border-top:.5px solid var(--hair)}
+
+  /* ---------- notes: indented, unboxed ---------- */
+  .note{
+    margin:14px 0 16px 1.6em; padding:0; background:none;
+    border:none; border-left:1px solid var(--rule); padding-left:14px;
+    font-size:9.2pt; line-height:1.44;
+  }
+  .note p{margin:0; text-align:left; color:var(--ink-2)}
+  .note b{color:var(--ink); font-weight:700}
+
+  .mk{
+    font-family:var(--sans); font-size:6.6pt; letter-spacing:.16em; text-transform:uppercase;
+    color:var(--ink-3); font-weight:700; vertical-align:.32em; margin-left:.6em;
+  }
+
+  /* ---------- part dividers ---------- */
+  .part{margin:0 0 26px; padding:0 0 8px; border-bottom:2px solid var(--accent)}
+  .part .pnum{
+    font-family:var(--sans); font-size:7pt; letter-spacing:.24em; text-transform:uppercase;
+    color:var(--accent); display:block; margin-bottom:5px; font-weight:700;
+  }
+  .part .ptitle{font-family:var(--sans); font-size:17pt; font-weight:700; letter-spacing:-.02em;
+    line-height:1.12; display:block}
+
+  /* ---------- contents ---------- */
+  .toc{margin:26px 0 0; padding-top:14px; border-top:.5px solid var(--hair)}
+  .toc h2{
+    font-family:var(--sans); font-size:7pt; letter-spacing:.2em; text-transform:uppercase;
+    color:var(--ink-3); text-align:left; margin:0 0 12px; font-weight:700;
+    padding-left:0; text-indent:0;
+  }
+  .tocgrp{
+    font-family:var(--sans); font-size:6.9pt; letter-spacing:.16em; text-transform:uppercase;
+    color:var(--ink-3); margin:13px 0 5px !important; font-weight:700;
+  }
+  .tocgrp:first-of-type{margin-top:0 !important}
+  .toclist{list-style:none; margin:0; padding:0}
+  .toclist li{display:flex; align-items:baseline; gap:12px; margin:0 0 3px; font-size:9.6pt;
+    color:var(--ink-2)}
+  .tn{font-family:var(--mono); font-size:7.6pt; color:var(--accent); min-width:16px;
+    text-align:right; flex:none}
+
+  /* ---------- system diagram ---------- */
+  .sys{margin:14px 0 6px}
+  .sysrow{display:flex; gap:5px}
+  .sysrow .box{flex:1; text-align:center; font-family:var(--mono); font-size:7.2pt;
+    padding:7px 0; border:1px solid var(--rule); background:var(--wash); color:var(--ink)}
+  .syslink{display:flex; gap:5px; height:14px}
+  .syslink span{flex:1; display:flex; justify-content:center; align-items:stretch}
+  .syslink span::after{content:""; display:block; width:1px; background:var(--rule)}
+  .sysbus{text-align:center; font-family:var(--mono); font-size:7.6pt; padding:8px 0;
+    border:1.6px solid var(--accent); background:var(--wash-2); color:var(--accent); font-weight:700}
+
+  /* ---------- layout figures ---------- */
+  .seg{margin:0 0 12px}
+  .seglab{font-family:var(--sans); font-size:6.9pt; letter-spacing:.13em; text-transform:uppercase;
+    color:var(--ink-3); margin:0 0 4px; font-weight:700}
+  .seglab em{font-style:normal; color:var(--ink)}
+  .segrow{display:flex; gap:4px}
+  .grp{flex:1; border:.7px solid var(--rule); background:none; padding:3px 3px 4px; min-width:0}
+  .grp.fill{background:var(--wash-2); border:1.6px solid var(--accent)}
+  .grp.blk{border:1.6px dashed var(--ink-3)}
+  .gname{font-family:var(--mono); font-size:6.4pt; color:var(--ink-3);
+    text-align:center; margin-bottom:3px; white-space:nowrap; overflow:hidden}
+  .grp.fill .gname{color:var(--ink); font-weight:700}
+  .cells{display:flex; gap:2px}
+  .cells span{flex:1; min-width:0; font-family:var(--mono); font-size:6.4pt; text-align:center;
+    padding:4px 0; background:none; border:.5px solid var(--hair); color:var(--ink-3)}
+  .cells span.on{background:var(--accent); border-color:var(--accent); color:var(--paper); font-weight:700}
+  .grp.fill .cells span{background:var(--paper); border-color:var(--accent); color:var(--accent)}
+  .cells span.slot{border:1.4px dashed var(--ink-3); color:var(--ink)}
+  .seglegend{font-family:var(--sans); font-size:6.9pt; color:var(--ink-3);
+    margin:6px 0 0; display:flex; gap:20px; flex-wrap:wrap}
+  .seglegend .sw{display:inline-block; width:18px; height:8px; vertical-align:0; margin-right:5px}
+  .seglegend .sw.f{background:var(--accent); border:.7px solid var(--accent)}
+  .seglegend .sw.d{border:1.4px dashed var(--ink-3)}
+
+  .memrow{display:flex; gap:2px; margin:3px 0; font-family:var(--mono); font-size:7.2pt}
+  .memrow .lab{width:58px; color:var(--ink-3); flex:none; text-align:right; padding-right:8px; line-height:2.2}
+  .cell{flex:1; padding:5px 0; text-align:center; background:none; color:var(--ink-3);
+    border:.5px solid var(--hair)}
+  .cell.on{background:var(--accent); color:var(--paper); border-color:var(--accent); font-weight:700}
+  .cell.off{background:none; color:var(--ink-3); border-color:var(--hair)}
+
+  @media (max-width:820px){
+    body{padding:12px 7px 50px}
+    .sheet{padding:0.45in 0.4in 0.35in; min-height:0}
+    .part .ptitle{font-size:16pt}
+    h1{font-size:18pt}
+  }
+
+  @page{ size:letter; margin:0.8in 0.95in; }
+  @media print{
+    body{background:#fff; padding:0; font-size:10pt}
+    .sheet{border:none; margin:0; padding:0; min-height:0; max-width:none;
+      break-after:page; page-break-after:always}
+    .sheet:last-child{break-after:auto; page-break-after:auto}
+    .runhead,.folio{display:none}
+    pre,th,tr.hi td{background:#F2F4F7 !important}
+    table{break-inside:avoid}
+  }
+</style>
+
+<!-- ================= PAGE 1 ================= -->
+<section class="sheet">
+<div class="body">
+
+<div class="titleblock">
+  <p class="doctype">Technical Report</p>
+  <h1>NPU-HBM Access-Pattern Analysis for LLM Decode</h1>
+  <p class="subtitle">How the address stream is generated, how it is spaced, and how HBM3 serves it</p>
+  <p class="byline">
+    ONNXim + Ramulator2 &middot; HBM3 @ 6.4 Gbps, 16 ch &times; 2 pch &times; 4 bg &times; 4 bank<br>
+    1 KB row &middot; 32 B request &middot; 4 cores &times; 128&times;128 systolic, fp16<br>
+    LLaMA-2 7B, one transformer block, decode &middot; 83 simulation runs
+  </p>
+</div>
+
+<div class="abstract">
+  <h2>Abstract</h2>
+  <p>LLM decode presents a memory system with two streams: a weight stream re-read in full on every step, and a KV cache stream whose addresses are produced by a paging allocator and therefore depend on serving history. We built a trace generator that drives a vLLM-style serving simulation into ONNXim and Ramulator2 and emits cycle-stamped DRAM addresses, and used it to characterise both streams at the interface. Decode is almost entirely a read workload: measured traffic is <strong>99.5% reads against 0.5% writes</strong>, since a step appends one token's keys and values per request while re-reading the whole cache.</p>
+  <p><strong>We identify data placement, rather than request scheduling, as the primary determinant of row-buffer utilisation for LLaMA decode, and we characterise the resulting access pattern per channel.</strong> Under the layout vLLM ships, a KV read fragments into 4 KB pieces separated by a 128 KB stride, and a channel receives 4.61 accesses per activation of a 32-slot row. <strong>We propose modifying the layout so that a head's blocks are adjacent</strong>, which raises that to 17.16. <strong>While-busy bandwidth goes from 45.8% to 95.4%</strong> on the most KV-heavy synthetic workload and from 45.8% to 94.8% on the Azure trace, and end-to-end time falls by 1.22x to 2.03x across six workloads. Measured instead as a whole-run average including idle cycles, those runs read 21% against 42%, the same separation. The same row-buffer reasoning applied to the weight stream yields a second placement: laid out tile-major rather than row-major, so a tile fetch becomes one long contiguous run instead of a short strided one, it gains a comparable <strong>22 to 23 points of row-hit rate</strong>. Its end-to-end gain is smaller, 1.07x to 1.09x, because these runs are not weight-bound, but the stream affected is the majority of DRAM traffic over a full generation.</p>
+  <p>The result holds across grouped-query attention (1.48x), XOR bank hashing (1.24x), a 64x change in vector-unit width, and 128 requests of a production Azure trace. It collapses to exactly 1.00x under multi-query attention, as the mechanism predicts.</p>
+  <p>From a memory-system perspective, several things follow that we have not tested. Block-major placement uses only <strong>14% of each row it opens</strong>, which makes page policy a live question: holding rows open may be the wrong default when most of them are abandoned. The two streams also behave very differently while sharing the same banks and queues, weights running linear at 25.5 accesses per activation against KV's 4.61, so the linear stream's rows are being evicted by the strided one and per-stream bank or queue partitioning may be worth evaluating. Channel interleave granularity fixes the contiguity a stream must reach before it fills a row, and the finest interleave may not be the right trade when several cores already supply independent streams. Bank hashing recovers much of the loss while <em>lowering</em> row-hit rate, pointing at bank conflict rather than row locality as the binding constraint.</p>
+</div>
+
+<div class="toc">
+<h2>Contents</h2>
+<p class="tocgrp">Part I &mdash; Trace generation</p>
+<ul class="toclist">
+<li><span class="tn">1</span><span>What addresses are generated</span></li>
+<li><span class="tn">2</span><span>How they are ordered</span></li>
+<li><span class="tn">3</span><span>How the memory system serves them</span></li>
+</ul>
+<p class="tocgrp">Part II &mdash; Results</p>
+<ul class="toclist">
+<li><span class="tn">4</span><span>Workloads</span></li>
+<li><span class="tn">5</span><span>KV layout across workloads</span></li>
+<li><span class="tn">6</span><span>Attention type, address mapper, and scaling</span></li>
+<li><span class="tn">7</span><span>Weight layout and vector-unit sensitivity</span></li>
+<li><span class="tn">8</span><span>Validation and limits</span></li>
+</ul>
+<p class="tocgrp">Part III &mdash; Reproduction and next steps</p>
+<ul class="toclist">
+<li><span class="tn">9</span><span>Reproduction</span></li>
+<li><span class="tn">10</span><span>Next: an HBM5 device model in Ramulator2</span></li>
+</ul>
+</div>
+
+
+</div>
+<div class="folio">1</div>
+</section>
+
+<!-- ================= PAGE 2 ================= -->
+<section class="sheet">
+<div class="runhead"><span>NPU-HBM Access-Pattern Analysis &middot; LLaMA Decode</span><span>&sect;1 What addresses are generated</span></div>
+<div class="body">
+
+<div class="part"><span class="pnum">Part I</span><span class="ptitle">Trace generation</span></div>
+
+<h2><span class="n">1</span>What addresses are generated</h2>
+
+<p class="lede">Two streams reach DRAM in decode, and their addresses are produced by different mechanisms.</p>
+
+<p>The <strong>weight stream</strong> is static. A given layer re-reads the same 12,648,448 addresses on every decode step, because its weights do not change. Across layers the <em>pattern</em> repeats but the addresses do not: layer <em>L</em> issues the layer-0 list rebased by a constant stride, so it touches different memory. Weights are between 10% and 85% of a step's DRAM traffic depending on batch size and context length, dominating at small batch and giving way to KV as either grows.</p>
+
+<p>The <strong>KV stream</strong> is dynamic. A request's cache is scattered across physical blocks chosen by a paging allocator, so its addresses depend on the admission and eviction history of every request that ran before it. This is why the generator runs a serving simulation rather than a synthetic pattern: the block table is the one component that cannot be derived from configuration.</p>
+
+<pre>workload + model + hardware + serving policy
+   &rarr; serving simulation      admission, batching, block tables
+   &rarr; address generation      for a chosen layout
+   &rarr; <b>cycle-stamped trace</b>      flat, or compact whole-generation form</pre>
+
+</div>
+<div class="folio">2</div>
+</section>
+
+<!-- ================= PAGE 3 ================= -->
+<section class="sheet">
+<div class="runhead"><span>NPU-HBM Access-Pattern Analysis &middot; LLaMA Decode</span><span>&sect;1 Storing a whole generation</span></div>
+<div class="body">
+
+<h3>Storing a whole generation</h3>
+
+<p>A flat trace of a full generation is impractical to keep. Eight requests over 32 generated tokens is 452 scheduler steps across 32 layers, which is 197.7 billion addresses, roughly <strong>4.0 TB</strong>. Almost all of it is the same weight address list written out again once per layer per step.</p>
+
+<p>Rather than compress the samples, the compact form stores <strong>the generator and the inputs it needs</strong>, and reconstructs any part of the trace on request. The output directory holds three files:</p>
+
+<pre>weights.u64     101 MB   one canonical weight address list
+blocks.jsonl    755 KB   one record per step: each live request's id, context length, block table
+manifest.json   308 B    model dimensions, layout, block size, strides, base addresses</pre>
+
+<p>Two invariances make the reconstruction exact rather than approximate. <strong>The weight addresses repeat exactly from step to step</strong>, since a layer's weights are fixed, and across layers the same 12,648,448-address pattern recurs rebased by <code>L &times; 25,296,896 B</code>. One stored list plus that stride therefore reconstructs all 14,464 layer-step combinations. <strong>KV addresses are a pure function</strong> of the block table, context length, layout and block size, so the only thing that changes from step to step is the block table, a few hundred integers per step.</p>
+
+<p>A window means one step and one layer, and it comes back at full fidelity in about a second:</p>
+
+<pre>$ replay_trace.py DIR --step 40 --layer 0
+  step 40, layer 0: 15,054,592 addresses
+  live requests (id, ctx): [(1,4128), (2,1836), (3,438), ...]
+  first 4: ['0x0', '0x90000', '0x120000', '0x1b0000']</pre>
+
+<p>That is <strong>97.2 MB stored against 4.0 TB flat</strong>, a factor of 42,655, with nothing lost. The window can be narrowed further to a single request or to KV traffic alone, and <code>--stamp</code> attaches arrival cycles. This is also the reason the serving simulation has to run the whole generation rather than a snapshot: the block tables are the one component that cannot be derived from configuration, because they are what an allocator produced in response to the admission and eviction history that preceded them.</p>
+
+<h3>What placement fixes</h3>
+
+<p>Layout decides which addresses are adjacent, and therefore the longest contiguous run any traversal can produce. Nothing downstream lengthens a run: the schedule can reorder but cannot re-neighbour, and the controller can only exploit locality that already exists.</p>
+
+</div>
+<div class="folio">3</div>
+</section>
+
+<!-- ================= PAGE 4 ================= -->
+<section class="sheet">
+<div class="runhead"><span>NPU-HBM Access-Pattern Analysis &middot; LLaMA Decode</span><span>&sect;1 The layout proposal</span></div>
+<div class="body">
+
+<h3>The two KV layouts</h3>
+
+<p>The KV cache is a grid: 32 rows, one per attention head, one column per token. Memory is one-dimensional, so the grid has to be written down in some order, and the choice is normally made for the allocator's convenience.</p>
+
+<pre>        t0   t1   t2   t3
+head 0  k,v  k,v  k,v  k,v
+head 1  k,v  k,v  k,v  k,v
+  ...
+head 31 k,v  k,v  k,v  k,v      one cell = 128 dims x 2 B x 2 (k,v) = <b>512 B</b></pre>
+
+<p>Paged attention picks token range first. The pool is cut into fixed blocks of 16 tokens and, inside a block, all 32 heads sit side by side. This is what vLLM ships and what every framework that copied paged attention inherited. <strong>We propose the transpose</strong>: cut the pool into 32 head regions first, and index blocks inside each.</p>
+
+<figure>
+
+<div class="seg">
+  <p class="seglab">(a) <em>block-major</em>, the default: pool segmented by token range</p>
+  <div class="segrow">
+    <div class="grp"><div class="gname">block 0</div>
+      <div class="cells"><span>h0</span><span class="on">h1</span><span>&hellip;</span><span>h31</span></div></div>
+    <div class="grp blk"><div class="gname">block 1</div>
+      <div class="cells"><span>h0</span><span class="on">h1</span><span>&hellip;</span><span>h31</span></div></div>
+    <div class="grp"><div class="gname">block 2</div>
+      <div class="cells"><span>h0</span><span class="on">h1</span><span>&hellip;</span><span>h31</span></div></div>
+    <div class="grp"><div class="gname">&hellip; block N-1</div>
+      <div class="cells"><span>h0</span><span class="on">h1</span><span>&hellip;</span><span>h31</span></div></div>
+  </div>
+</div>
+
+<div class="seg">
+  <p class="seglab">(b) <em>head-major</em>, proposed: pool segmented by head</p>
+  <div class="segrow">
+    <div class="grp"><div class="gname">region h0</div>
+      <div class="cells"><span>s0</span><span class="slot">s1</span><span>&hellip;</span><span>sS-1</span></div></div>
+    <div class="grp fill"><div class="gname">region h1</div>
+      <div class="cells"><span>s0</span><span class="slot">s1</span><span>&hellip;</span><span>sS-1</span></div></div>
+    <div class="grp"><div class="gname">region h2</div>
+      <div class="cells"><span>s0</span><span class="slot">s1</span><span>&hellip;</span><span>sS-1</span></div></div>
+    <div class="grp"><div class="gname">&hellip; region h31</div>
+      <div class="cells"><span>s0</span><span class="slot">s1</span><span>&hellip;</span><span>sS-1</span></div></div>
+  </div>
+</div>
+
+<p class="seglegend">
+  <span><span class="sw f"></span>head 1's data</span>
+  <span><span class="sw d"></span>one logical block</span>
+</p>
+
+<figcaption><b>Figure 1</b> Pool segmentation under each layout. They are exact transposes. Under the default <em>(a)</em> the outer division is the token range, so a logical block is contiguous but head 1 is scattered into one fragment per block. Under the proposal <em>(b)</em> the outer division is the head, so head 1's fragments become adjacent and a logical block is slot index <em>i</em> claimed in all 32 regions. Both keep one block table, one free list, and 16-token granularity.</figcaption>
+</figure>
+
+<pre>block-major (default)    off = phys x (32 x 16 x 128) + head x (16 x 128) + tok x 128 + d
+head-major  (proposed)   off = head x (S  x 16 x 128) + phys x (16 x 128) + tok x 128 + d
+                                <b>only the outermost index changes</b></pre>
+
+<p><code>S</code> is the pool slot count, a startup constant, so the head stride does not vary with context length and no arithmetic becomes dynamic.</p>
+
+<p><strong>Why the head is the unit that matters.</strong> Softmax normalises over tokens within a head: the denominator sums over every token of that head and no others. Head 5 cannot emit an output element until all of head 5's tokens have been read, and nothing from head 4 or head 6 enters that sum. The indivisible read is one row of the grid, and the 32 heads are independent computations that meet only at the final concatenation. That is the requirement the layout either satisfies or fragments.</p>
+
+<figure>
+<div class="memrow"><span class="lab">block</span><span class="cell off">h0</span><span class="cell on">h1</span><span class="cell off">h2</span><span class="cell off">h3</span><span class="cell off">h0</span><span class="cell on">h1</span><span class="cell off">h2</span><span class="cell off">h3</span></div>
+<div class="memrow"><span class="lab">head</span><span class="cell off">h0</span><span class="cell off">h0</span><span class="cell on">h1</span><span class="cell on">h1</span><span class="cell off">h2</span><span class="cell off">h2</span><span class="cell off">h3</span><span class="cell off">h3</span></div>
+<figcaption><b>Figure 2</b> The resulting address order, head 1 shaded. The default interleaves heads at every block boundary; the proposal concatenates a head's blocks into one long run. Weights admit the same choice: row-major storage read in tile order yields a 768 B run before a 24,576 B jump, while tile-major storage makes one tile a single 576 KB run.</figcaption>
+</figure>
+
+</div>
+<div class="folio">4</div>
+</section>
+
+<!-- ================= PAGE 5 ================= -->
+<section class="sheet">
+<div class="runhead"><span>NPU-HBM Access-Pattern Analysis &middot; LLaMA Decode</span><span>&sect;1&ndash;2 Layout costs, ordering</span></div>
+<div class="body">
+
+<h3>What head-major costs</h3>
+
+<p><strong>Writes scatter.</strong> Appending one token writes all 32 heads: one contiguous 8 KB block under the default, 32 pool-stride-apart regions under the proposal. In decode this is invisible, since measured traffic is 7,584,318 reads against 37,905 writes and writes are 0.5% of accesses. In prefill it would not be, because a whole prompt's KV is written at once. That is a real boundary on the scope of this report.</p>
+
+<p><strong>The partition is fixed at startup.</strong> Head count is baked into every address. A pool cut for 32 KV heads does not serve an 8-head GQA model without a rebuild, and cannot grow at run time without recomputing every address. The default's pool is a flat, extensible array of blocks.</p>
+
+<p><strong>It depends on the allocator.</strong> The gain requires a request's successive physical slots to be spatially clustered. ONNXim's allocator shuffles within a bounded range and vLLM's free list is a LIFO deque, so both cluster; under a uniformly random allocator the two layouts converge and the advantage disappears. Copy-on-write costs a measured 1.20&times;. Prefix sharing is unaffected, being a block-table operation. The benefit falls with KV head count and reaches zero under MQA, so the layout is worth nothing on an MQA model.</p>
+
+<h2><span class="n">2</span>How they are ordered</h2>
+
+<p class="lede">Spacing is where placement becomes a DRAM cost, and the threshold is sharp.</p>
+
+<p>The channel index is taken from low address bits, <code>channel = (addr &gt;&gt; 5) &amp; 15</code>, so consecutive 32 B requests land on different channels and cycle through all sixteen. A contiguous run of <em>L</em> bytes therefore deposits only <em>L</em>/16 bytes in each channel. To fill a 1 KB row on every channel a run must reach</p>
+
+<pre>16 channels &times; 1024 B = <b>16,384 B of contiguous address</b></pre>
+
+<p>Measure both KV layouts against it. One head's share of one 16-token block is <code>16 &times; 128 &times; 2 = 4,096 B</code>. Under block-major that run is bounded by the next head's data, which is not read until that head's turn, so it stays at 4 KB: <strong>256 B per channel, a quarter row, 8 accesses per activation</strong>. Under head-major the run is bounded by the same head's next slot, which is read immediately, so four slots concatenate to 16 KB: <strong>1,024 B per channel, a full row, 32 accesses per activation</strong>. Weights show the same arithmetic: a 768 B row-major run covers 48 B per channel, under 5% of a row.</p>
+
+<h3>Ordering contributes almost nothing</h3>
+
+<p>Six ordering axes exist. Two are fixed by correctness: softmax normalises over tokens within a head, which forces head-outer grouping, and <code>dk</code> must be innermost or the address space is not covered. Three are measurably null, including token order within a head, where all four orderings land at 96.9% because once a head is one contiguous run the order of consumption inside it changes nothing. One is live: intra-tile weight fetch order, worth 7.8 points of row hit and <strong>0.7 points of bandwidth</strong>, whose winner is plain sequential, which every compiler already emits.</p>
+
+<p>Tiling is inert for a structural reason. The mapper pads the token dimension up to array height before tiling, so weight re-reads are pinned at exactly 1 for any batch of 128 or fewer, independent of accumulator size. Across 216 feasible tile shapes the total traffic spread is <strong>1.03&times;</strong>. Attention itself is GEMV, not GEMM: with <code>q_len = 1</code> the score computation is <code>(1&times;128)&middot;(128&times;seq_len)</code>, and requests cannot be batched into one matrix because each has its own context length and cache.</p>
+
+<p>The visible design space is therefore small enough to enumerate exhaustively rather than search: three intra-tile orders, two layouts crossed with two allocation models, plus a non-selectable reference. Nine scored configurations, and the selection does not change across workload, attention type, address mapper or serving preset.</p>
+
+<div class="note"><p><b>What the enumeration does not resolve.</b> The analytical scorer gives block-major 87.0% row hit where the simulator measures 76 to 78%, and it scores the clustered and shuffled allocators identically, so it does not separate one of the axes it lists. Its <em>ranking</em> is validated against simulation (8 of 8); its absolute numbers are not. The allocator question was settled by simulation, not by the tool.</p></div>
+
+</div>
+<div class="folio">5</div>
+</section>
+
+<!-- ================= PAGE 6 ================= -->
+<section class="sheet">
+<div class="runhead"><span>NPU-HBM Access-Pattern Analysis &middot; LLaMA Decode</span><span>&sect;2 Parallelism</span></div>
+<div class="body">
+
+<h3>How the work is split across cores</h3>
+
+<p>Four cores share one 16-channel HBM3 system. How attention work is assigned to them changes how the four address streams interleave at the memory, though not what those streams contain.</p>
+
+<div class="sys">
+  <div class="sysrow">
+    <div class="box">core 0</div><div class="box">core 1</div><div class="box">core 2</div><div class="box">core 3</div>
+  </div>
+  <div class="syslink"><span></span><span></span><span></span><span></span></div>
+  <div class="sysbus">shared HBM3 &middot; 16 channels &times; 2 pseudochannels &times; 4 bank groups &times; 4 banks</div>
+</div>
+
+<p class="tabcaption"><b>Figure 3</b> Four 128&times;128 systolic cores against one shared memory system. Each core issues into per-channel request buffers, so a core's stream retains its own locality while the four interleave at the bank.</p>
+
+<div class="tablewrap">
+<p class="tabcaption"><b>Table 1</b> The three assignment strategies (<code>ONNXIM_PAR_STRATEGY</code>). Only the tile-to-core mapping changes; the addresses are identical in all three.</p>
+<table>
+<thead><tr><th>Strategy</th><th>Each core takes</th><th>Consequence</th></tr></thead>
+<tbody>
+<tr class="hi"><td class="k">head <em>(default)</em></td><td>heads <em>c</em>, <em>c</em>+4, <em>c</em>+8 ... of every request</td><td class="good">balanced; KV split, not duplicated</td></tr>
+<tr><td class="k">request</td><td>one whole request, all 32 heads</td><td class="bad">imbalanced when contexts differ</td></tr>
+<tr><td class="k">seq</td><td>one token chunk of every head</td><td class="bad">softmax denominator spans cores</td></tr>
+</tbody>
+</table>
+</div>
+
+<p>Head-parallel is the default and beats the other two by <strong>3.3&times;</strong>. The reason is worth stating precisely, because it is not a memory effect: the cost is <strong>load imbalance</strong>, with 611,200 tile rows landing on one core against 6,528 on another. Requests in a real batch have very different context lengths, so pinning a whole request to a core makes the slowest core the step time. Head-parallel divides every request the same way, so all four cores see the same amount of work regardless of the batch mix.</p>
+
+<p>Two properties of head-parallel matter for the layout argument. The KV cache is <strong>split across cores, not duplicated</strong>: measured KV traffic scales with the number of KV heads, falling to 0.25&times; at GQA-4 and 0.03&times; at MQA, which confirms each head's data is fetched once. And because a core owns whole heads, head-major placement gives each core a long contiguous run of its own, whereas the default layout hands every core the same fragmented stride pattern.</p>
+
+<div class="note"><p><b>Parallelism does not change the addresses.</b> All three strategies issue exactly the same address set; only which core issues each tile differs. This matters for the analytical model: scoring a lockstep round-robin interleaving of four cores ranks the layouts <em>backwards</em>, while scoring one un-interleaved stream ranks them correctly, because cores issue in bursts into per-channel buffers and locality within one core's stream survives.</p></div>
+
+</div>
+<div class="folio">6</div>
+</section>
+
+<!-- ================= PAGE 7 ================= -->
+<section class="sheet">
+<div class="runhead"><span>NPU-HBM Access-Pattern Analysis &middot; LLaMA Decode</span><span>&sect;3 How the memory system serves them</span></div>
+<div class="body">
+
+<h2><span class="n">3</span>How the memory system serves them</h2>
+
+<p class="lede">This section characterises the arrival stream as a memory controller sees it: per channel, per bank, and in time.</p>
+
+<p>One methodological point governs the rest. The raw trace is ordered by issue cycle across all sixteen channels, so a global delta histogram is a shuffle of sixteen independent streams and returns a meaningless symmetric &plusmn;32 B distribution. The meaningful unit is <strong>one channel's stream</strong>. Within a channel a perfectly sequential global stream appears as a constant 512 B stride, because the intervening fifteen requests went elsewhere.</p>
+
+<div class="tablewrap">
+<p class="tabcaption"><b>Table 2</b> Access-pattern classification. Channel 0, 4M-request window, runs identical but for the KV layout.</p>
+<table>
+<thead><tr><th>Stream</th><th>&delta; near 512 B</th><th>forward</th><th>acc / ACT</th><th>p50</th><th>row use</th><th>rows</th><th>Pattern</th></tr></thead>
+<tbody>
+<tr><td class="k">weights, head-major</td><td>68.1%</td><td>91.6%</td><td>25.53</td><td>32</td><td class="good">80%</td><td>2,638</td><td>linear</td></tr>
+<tr><td class="k">weights, block-major</td><td>68.1%</td><td>91.6%</td><td>25.53</td><td>32</td><td class="good">80%</td><td>2,638</td><td>linear</td></tr>
+<tr class="rule"><td class="k">KV, head-major</td><td>47.4%</td><td>77.1%</td><td class="good">17.16</td><td>24</td><td class="good">54%</td><td>284</td><td>blocked-contiguous</td></tr>
+<tr><td class="k">KV, block-major</td><td>43.6%</td><td>76.9%</td><td class="bad">4.61</td><td>6</td><td class="bad">14%</td><td>1,012</td><td>strided, 128 KB</td></tr>
+</tbody>
+</table>
+</div>
+
+<p>The weight rows are a control: identical to every digit across both arms, as they must be, since KV layout does not touch weight addresses.</p>
+
+<p><strong>Weights are linear with reorder jitter.</strong> Per-channel deltas scatter around 512 B (608, 544, 480, 416: all 512 offset by multiples of 32). The addresses are sequential; the interconnect and request queue deliver them slightly out of order. The row buffer is indifferent to that, and the median row-open run is a full 32 accesses.</p>
+
+<p><strong>Block-major KV is strided, and the stride is derivable.</strong> Dominant jumps measure 128,672, &minus;127,424, 128,576 and 127,552 B, which is 128 KB plus reorder jitter. That number is <code>32 heads &times; 16 tokens &times; 128 dims &times; 2 B = 131,072 B</code>, read directly off the layout formula. Every 4 KB fragment is followed by a jump over the other 31 heads. Head-major's largest recurring jump is about 1.1 KB and nothing about it is structural.</p>
+
+<p>Against the prediction of &sect;2, 32 versus 8 accesses per activation, measurement gives 17.16 versus 4.61: the ratio of <strong>3.72&times;</strong> is confirmed, while both absolutes land near half the ideal because rows close before full consumption when 32 heads and the weight stream interleave. Block-major touches <strong>1,012 rows against 284</strong> for identical bytes.</p>
+
+<h3>Timing of arrivals</h3>
+
+<p>Within a burst the core issues <strong>7.91 requests per cycle</strong>, and the stream is close to regular: 88% of inter-arrival gaps are zero and the rest are one or two cycles, stable at 7.29 to 7.79 across the six sixths of a multi-step run. Traffic is <strong>99.5% reads</strong>.</p>
+
+<p>Idle time is bursty and coarse-grained rather than fine. On a single core the DRAM is idle 77.5% of the run, but in only 1,182 episodes averaging 3,159 cycles: these are whole attention compute phases, not per-instruction gaps. An attention tile is 16 GEMM and 9 vector instructions over roughly 4,900 cycles with keys and values fetched up front, so the memory system is silent across the entire tile. At four cores the idle fraction falls to 4.2% because cores' compute phases interleave.</p>
+
+<div class="note"><p><b>A dip during softmax does not appear, and the reason is architectural.</b> Softmax here is fused: scores are produced into the scratchpad, normalised in place, and consumed without touching DRAM. Making it 26&times; more expensive (a 64&times; narrower vector unit with 4-cycle <code>exp</code>) changed idle time from 77.53% to 77.64% and the episode-length distribution not at all. In a non-fused pipeline softmax is its own kernel with its own traffic between two weight-streaming GEMVs, which produces the three-level bandwidth signature reported elsewhere. Both designs dip; only the non-fused one lets the dip be attributed to softmax.</p></div>
+
+<h3>The controller side, briefly</h3>
+
+<p>A ten-arm scheduling sweep on an identical address stream gave a negative result: deeper queues, a row-hit priority tier, larger active buffers and candidate retry moved while-busy bandwidth by 2 to 4 points, and two arms were bit-identical to baseline. The useful number for sizing is why. In 100% of blocked cycles no timing-ready request was present anywhere in the buffer, and the p99 reorder distance needed to repair block-major placement is <strong>8,080 requests</strong> against 16 for head-major. Conflict rate is a property of the arrival stream, not of the scheduler.</p>
+
+<div class="note"><p><b>Two metric definitions, because they differ by more than a factor of two.</b> <em>While-busy bandwidth</em> is transactions divided by (busy cycles x channels), counted only over cycles when a channel had work queued. The whole-run average including idle cycles is much lower and separates identically: for <code>az128</code> it is 42% head-major against 21% block-major, the same 2.0x. Row-hit rate is reported as hits over <em>all</em> accesses including misses; the hits-over-(hits+conflicts) form stays at 95 to 96% under every configuration and hides the effect entirely.</p></div>
+
+</div>
+<div class="folio">7</div>
+</section>
+
+<!-- ================= PAGE 8 ================= -->
+<section class="sheet">
+<div class="runhead"><span>NPU-HBM Access-Pattern Analysis &middot; LLaMA Decode</span><span>&sect;3 Open questions</span></div>
+<div class="body">
+
+<h3>Open questions for the memory system</h3>
+
+<p>The characterisation above is what LLaMA decode presents. What a controller should do about it we have largely not tested, so what follows are the questions our measurements raise rather than answer. The trace generator can produce whatever additional streams you would want to evaluate them against.</p>
+
+<p><strong>Channel interleave granularity.</strong> Addresses move to the next channel every 32 B, so a contiguous run is spread thinly across all sixteen: a 4 KB KV fragment deposits 256 B into each of sixteen rows and uses a quarter of every one. Switching channels less often concentrates a fragment on fewer channels but fills the rows it opens. In general a fragment of size <em>F</em> at granularity <em>G</em> leaves <code>max(F/16, G)</code> bytes in each row it touches, so nothing improves until <em>G</em> exceeds <code>F/16</code>. For the 4 KB fragment that means 256 B granularity changes nothing, 512 B gives half a row, and 1 KB gives four full rows on four channels instead of sixteen quarter-rows: row utilisation 25% to 100%, single-fragment channel parallelism sixteen down to four. Whether that trade is worth taking depends on how many independent fragments are in flight, and with four cores each working several heads there are usually enough to keep the remaining channels busy.</p>
+
+<p><strong>Address hashing.</strong> XOR bank hashing took block-major placement from 45.8% to 75.7% bandwidth while <em>lowering</em> its row-hit rate by 4 points. That is a large recovery from a cheap mechanism, and it suggests the binding constraint under fragmented placement is bank conflict rather than row locality. Whether a hash tuned against the 128 KB stride specifically does better is untested.</p>
+
+<p><strong>Page policy.</strong> Block-major placement uses 14% of each row it opens and abandons the rest. Whether rows should be held open at all under that distribution, or auto-precharged on the assumption they will not be revisited, is a decision the row-use histogram above is the right input for, and one nothing here tests. Note that prediction is not the missing piece: the core issues explicit tile fetches whose addresses the mapper computes in advance, so the stride is already known rather than needing to be learned, and fetching badly placed addresses earlier does not make them fill more of a row.</p>
+
+<p><strong>Stream separation.</strong> The two streams share banks and queues but behave nothing alike: weights run linear at 25.5 accesses per activation with a median full-row run, KV strided at 4.61. A policy that suits one is likely wrong for the other, and the mixture is what the controller actually sees. Partitioning banks or queue entries per stream, or simply tagging requests by stream, is testable against the traces already generated.</p>
+
+
+
+<p><strong>The simple bandwidth bound does not hold here.</strong> A common way to size row-buffer requirements is to ask how many accesses per activation are needed to keep the bus full. A bank cannot be reopened faster than <code>tRC</code>, 19.1 ns on this device, and a channel has 32 banks, so activations can in principle issue at 1.68 per nanosecond. Each one delivers <code>acc/ACT &times; 32 B</code>, and a channel is 51.2 GB/s:</p>
+
+<pre>acc/ACT  &ge;  51.2 B/ns  /  (1.68 ACT/ns &times; 32 B)  =  <b>0.95</b></pre>
+
+<p>By that reckoning row locality should hardly matter: about one access per activation would saturate the bus. Block-major placement delivers <strong>4.61</strong>, nearly five times the requirement, and still reaches only 45.8% bandwidth. The bound fails because it assumes all 32 banks can be activated back to back and evenly spread. In practice <code>tFAW</code> caps activations in a rolling window, <code>tRRD</code> spaces consecutive ones, <code>tCCD_L</code> limits column accesses within a bank group, and refresh takes its share, so the achievable activation rate sits well below 1.68 per nanosecond. The practical consequence is that row-buffer requirements for this traffic cannot be sized from <code>tRC</code> and bank count alone.</p>
+
+<p><strong>Read/write turnaround.</strong> Decode is 99.5% reads, so bus turnaround is close to free and none of these results exercise it. Prefill mixes in large KV writes, and head-major placement scatters exactly those writes, so turnaround cost and write placement should be examined together rather than separately.</p>
+
+
+</div>
+<div class="folio">8</div>
+</section>
+
+<!-- ================= PAGE 9 ================= -->
+<section class="sheet">
+<div class="runhead"><span>NPU-HBM Access-Pattern Analysis &middot; LLaMA Decode</span><span>&sect;4&ndash;5 Workloads and KV layout</span></div>
+<div class="body">
+
+<div class="part"><span class="pnum">Part II</span><span class="ptitle">Results</span></div>
+
+<h2><span class="n">4</span>Workloads</h2>
+
+<div class="tablewrap">
+<p class="tabcaption"><b>Table 3</b> The six workloads plus a multi-step run. Context length is the KV cache resident when the step begins.</p>
+<table>
+<thead><tr><th>Workload</th><th>Reqs</th><th>Context range</th><th>Mean</th><th>Median</th><th>Steps</th><th>Source</th></tr></thead>
+<tbody>
+<tr><td class="k">wl33</td><td>8</td><td>154 to 1,226</td><td>628</td><td>580</td><td>1</td><td>synthetic, short</td></tr>
+<tr><td class="k">v8m1024</td><td>8</td><td>274 to 2,600</td><td>1,023</td><td>554</td><td>1</td><td>synthetic, mean 1k</td></tr>
+<tr><td class="k">wl11</td><td>8</td><td>177 to 3,851</td><td>1,302</td><td>845</td><td>1</td><td>synthetic, wide</td></tr>
+<tr><td class="k">wl22</td><td>8</td><td>208 to 3,559</td><td>1,573</td><td>1,238</td><td>1</td><td>synthetic, long</td></tr>
+<tr class="hi"><td class="k">v32m4096</td><td>32</td><td>714 to 10,025</td><td>4,095</td><td>3,608</td><td>1</td><td>synthetic, stress</td></tr>
+<tr class="hi"><td class="k">az128</td><td>128</td><td>169 to 5,305</td><td>1,563</td><td>1,038</td><td>1</td><td><strong>Azure production</strong></td></tr>
+<tr class="rule"><td class="k">azgen</td><td>8</td><td>237 to 4,089</td><td>1,170</td><td>698</td><td><strong>32</strong></td><td>Azure, cache grows</td></tr>
+</tbody>
+</table>
+</div>
+
+<p>The synthetic four sweep KV share of traffic from 15% to 35% at a fixed batch of eight. <code>v32m4096</code> raises batch and context together to reach 78%, where the effect saturates. <code>az128</code> is the only point that is neither synthetic nor hand-sized. <code>azgen</code> runs 32 decode steps so the cache grows during the run, checking that single-step results are not an artefact of a static cache; it costs 574 million accesses.</p>
+
+<h2><span class="n">5</span>KV layout across workloads</h2>
+
+<div class="tablewrap">
+<p class="tabcaption"><b>Table 4</b> Four cores, tile-major weights, block 16, <code>RoBaRaCoCh</code>. Hit rates are KV-stream specific; bandwidth is channel-level.</p>
+<table>
+<thead><tr><th>Workload</th><th>KV share</th><th>head hit</th><th>head BW</th><th>head cyc</th><th>blk hit</th><th>blk BW</th><th>blk cyc</th><th>Ratio</th></tr></thead>
+<tbody>
+<tr><td class="k">wl33</td><td>15.4%</td><td class="good">95.9%</td><td>98.1%</td><td>654,875</td><td class="bad">78.4%</td><td>80.6%</td><td>797,665</td><td>1.22&times;</td></tr>
+<tr><td class="k">v8m1024</td><td>23.2%</td><td class="good">96.9%</td><td>98.0%</td><td>738,586</td><td class="bad">76.1%</td><td>72.1%</td><td>991,228</td><td>1.34&times;</td></tr>
+<tr><td class="k">wl11</td><td>28.8%</td><td class="good">94.7%</td><td>98.4%</td><td>777,168</td><td class="bad">77.4%</td><td>69.1%</td><td>1,096,288</td><td>1.41&times;</td></tr>
+<tr><td class="k">wl22</td><td>34.6%</td><td class="good">96.5%</td><td>97.5%</td><td>832,400</td><td class="bad">77.8%</td><td>66.5%</td><td>1,207,095</td><td>1.45&times;</td></tr>
+<tr class="hi"><td class="k">v32m4096</td><td>78.2%</td><td class="good">91.3%</td><td>95.4%</td><td>3,630,679</td><td class="bad">77.3%</td><td>45.8%</td><td>7,370,203</td><td>2.03&times;</td></tr>
+<tr class="hi"><td class="k">az128</td><td>89.5%</td><td class="good">94.8%</td><td>94.8%</td><td>5,652,095</td><td class="bad">76.4%</td><td>45.8%</td><td>11,176,999</td><td>1.98&times;</td></tr>
+<tr class="rule"><td class="k">azgen</td><td>28.7%</td><td class="good">95.6%</td><td>97.9%</td><td>24,430,212</td><td class="bad">76.0%</td><td>69.3%</td><td>34,045,646</td><td>1.39&times;</td></tr>
+</tbody>
+</table>
+</div>
+
+<p>Block-major's row-hit rate does not move: 76.1% at one decode step and 76.0% at thirty-two, 76 to 78% at eight requests or 128, at 600-token or 4,000-token contexts. A quarter-row per channel does not improve with warm-up, longer context, or more requests to interleave. The margin tracks KV share of traffic and saturates near 2&times;.</p>
+
+</div>
+<div class="folio">9</div>
+</section>
+
+<!-- ================= PAGE 10 ================= -->
+<section class="sheet">
+<div class="runhead"><span>NPU-HBM Access-Pattern Analysis &middot; LLaMA Decode</span><span>&sect;6 Attention type and scaling</span></div>
+<div class="body">
+
+<h2><span class="n">6</span>Attention type, address mapper, and scaling</h2>
+
+<div class="tablewrap">
+<p class="tabcaption"><b>Table 5</b> Grouped- and multi-query attention, with and without XOR bank hashing.</p>
+<table>
+<thead><tr><th>Model</th><th>kv heads</th><th>Mapper</th><th>head cycles</th><th>block cycles</th><th>head BW</th><th>block BW</th><th>Ratio</th></tr></thead>
+<tbody>
+<tr><td class="k">MHA</td><td>32</td><td>RoBaRaCoCh</td><td>3,630,679</td><td>7,370,203</td><td>95.4%</td><td>45.8%</td><td>2.03&times;</td></tr>
+<tr><td class="k">MHA</td><td>32</td><td>XOR</td><td>3,641,817</td><td>4,532,950</td><td>94.9%</td><td>75.7%</td><td>1.24&times;</td></tr>
+<tr><td class="k">GQA-4</td><td>8</td><td>RoBaRaCoCh</td><td>1,380,897</td><td>2,042,142</td><td>94.2%</td><td>61.8%</td><td>1.48&times;</td></tr>
+<tr><td class="k">GQA-4</td><td>8</td><td>XOR</td><td>1,381,384</td><td>1,749,018</td><td>94.2%</td><td>73.2%</td><td>1.27&times;</td></tr>
+<tr><td class="k">MQA</td><td>1</td><td>RoBaRaCoCh</td><td>1,080,313</td><td>1,080,313</td><td>96.7%</td><td>96.7%</td><td>1.00&times;</td></tr>
+<tr><td class="k">MQA</td><td>1</td><td>XOR</td><td>1,079,742</td><td>1,079,742</td><td>96.7%</td><td>96.7%</td><td>1.00&times;</td></tr>
+</tbody>
+</table>
+</div>
+
+<p>MQA is bit-identical under both mappers: with one KV head the two index orders resolve to the same addresses, so the two layouts <em>are</em> the same layout. That is the check that the mechanism is understood rather than fitted. GQA-4 retains 1.48&times;, which covers LLaMA-3 and Mistral. Fewer KV heads means a larger per-head slice of each block, closer to the striping threshold, so the penalty shrinks smoothly to zero.</p>
+
+<p><strong>The defensible floor is 1.24&times;</strong>, holding across MHA and GQA with and without bank hashing. The 2.03&times; headline is a best case.</p>
+
+<div class="tablewrap">
+<p class="tabcaption"><b>Table 6</b> Core-count scaling at a fixed 128&times;128 array per core. Not iso-area: PE count scales with core count.</p>
+<table>
+<thead><tr><th>Cores</th><th>head cycles</th><th>block cycles</th><th>head BW</th><th>block BW</th><th>Ratio</th></tr></thead>
+<tbody>
+<tr><td class="k">1</td><td>10,799,284</td><td>11,156,132</td><td>94.4%</td><td>51.8%</td><td>1.03&times;</td></tr>
+<tr><td class="k">2</td><td>5,604,984</td><td>7,550,011</td><td>93.4%</td><td>45.8%</td><td>1.35&times;</td></tr>
+<tr class="hi"><td class="k">4</td><td>3,685,039</td><td>7,364,601</td><td>93.9%</td><td>45.7%</td><td>2.00&times;</td></tr>
+<tr><td class="k">8</td><td>3,793,035</td><td>7,092,231</td><td>90.4%</td><td>47.3%</td><td>1.87&times;</td></tr>
+<tr><td class="k">16</td><td>4,023,851</td><td>4,023,851</td><td>85.5%</td><td>49.6%</td><td>1.69&times;</td></tr>
+</tbody>
+</table>
+</div>
+
+<p>At one core the layouts nearly tie: a single core cannot generate enough outstanding requests to keep sixteen channels busy, so row efficiency is not binding. The gap opens as demand rises to meet supply. Sixteen times the compute buys 2.68&times; the speed and regresses past four cores, because the weight stream is fixed and extra cores add contention. PE utilisation is 3 to 4.5% at four cores.</p>
+
+</div>
+<div class="folio">10</div>
+</section>
+
+<!-- ================= PAGE 11 ================= -->
+<section class="sheet">
+<div class="runhead"><span>NPU-HBM Access-Pattern Analysis &middot; LLaMA Decode</span><span>&sect;7&ndash;8 Sensitivity and validation</span></div>
+<div class="body">
+
+<h2><span class="n">7</span>Weight layout and vector-unit sensitivity</h2>
+
+<div class="tablewrap">
+<p class="tabcaption"><b>Table 7</b> Row-hit rate under row-major and tile-major weight storage.</p>
+<table>
+<thead><tr><th>Workload</th><th>row-major</th><th>tile-major</th><th>Gain</th><th>Speedup</th></tr></thead>
+<tbody>
+<tr><td class="k">v8m1024</td><td class="bad">73.6%</td><td class="good">95.7%</td><td>+22.1</td><td>1.08&times;</td></tr>
+<tr><td class="k">wl11</td><td class="bad">72.8%</td><td class="good">95.8%</td><td>+23.0</td><td>1.08&times;</td></tr>
+<tr><td class="k">wl22</td><td class="bad">72.4%</td><td class="good">95.6%</td><td>+23.2</td><td>1.07&times;</td></tr>
+<tr><td class="k">wl33</td><td class="bad">73.5%</td><td class="good">95.8%</td><td>+22.3</td><td>1.09&times;</td></tr>
+</tbody>
+</table>
+</div>
+
+<p>The speedup is modest at these batch sizes because the runs are not weight-bound, but the stream affected is 96% of traffic over a full generation. No scheduling parameter fixes it: the inner output factor is capped by accumulator capacity, and even a 512 MB accumulator reaches only a 6 KB run against the 16 KB threshold. The fix is where the bytes are written, at model load. Note that baseline ONNXim (and NeuPIMs, which embeds it) runs at the 73.6% point.</p>
+
+<div class="tablewrap">
+<p class="tabcaption"><b>Table 8</b> Sensitivity to vector-unit width. Twelve runs, identical but for the vector configuration.</p>
+<table>
+<thead><tr><th>Vector unit</th><th>softmax</th><th colspan="3">v8m1024</th><th colspan="3">v32m4096</th></tr>
+<tr><th></th><th></th><th>head</th><th>block</th><th>ratio</th><th>head</th><th>block</th><th>ratio</th></tr></thead>
+<tbody>
+<tr><td class="k">65536 b, exp 1 <em>(default)</em></td><td>5 cyc</td><td>738,586</td><td>991,228</td><td class="good">1.342&times;</td><td>3,630,679</td><td>7,370,203</td><td class="good">2.030&times;</td></tr>
+<tr><td class="k">8192 b, exp 2</td><td>18 / 66</td><td>738,844</td><td>984,626</td><td class="good">1.333&times;</td><td>3,625,550</td><td>7,442,563</td><td class="good">2.053&times;</td></tr>
+<tr><td class="k">1024 b, exp 4</td><td>130 / 514</td><td>741,750</td><td>985,033</td><td class="good">1.328&times;</td><td>3,671,272</td><td>7,534,081</td><td class="good">2.052&times;</td></tr>
+</tbody>
+</table>
+</div>
+
+<p>The default vector unit is 4,096 fp16 lanes with single-cycle <code>exp</code>, which makes softmax cost 5 cycles at any context up to 4k: O(1) where the operation is O(<em>seq_len</em>). That is not defensible hardware, so it was tested. Narrowing the unit 64&times; and quadrupling <code>exp</code> latency moves the ratio by at most 1%, and at 4k context it moves <em>up</em>.</p>
+
+<h2><span class="n">8</span>Validation and limits</h2>
+
+<div class="tablewrap">
+<p class="tabcaption"><b>Table 9</b> Checks against the cycle-level simulator.</p>
+<table>
+<thead><tr><th>Check</th><th>Result</th></tr></thead>
+<tbody>
+<tr><td class="k">Analytical row hit vs simulator</td><td class="good">&plusmn;1.1 points, both streams</td></tr>
+<tr><td class="k">KV address counts</td><td class="good">8 of 8 exact</td></tr>
+<tr><td class="k">Weight address counts</td><td class="good">1.0002</td></tr>
+<tr><td class="k">Tiling vs simulator mapper</td><td class="good">reproduces exactly</td></tr>
+<tr><td class="k">Layout ranking vs simulation</td><td class="good">8 of 8</td></tr>
+<tr><td class="k">Timing model vs multi-step run</td><td class="good">0.1% aggregate</td></tr>
+<tr><td class="k">Run-to-run variance</td><td class="good">bit-identical</td></tr>
+<tr><td class="k">Baseline reproduced in the sensitivity re-run</td><td class="good">exact to the cycle</td></tr>
+<tr class="rule"><td class="k">Analytical <em>magnitude</em></td><td class="bad">not validated, understates block-major by 10 points</td></tr>
+</tbody>
+</table>
+</div>
+
+
+
+<p><strong>Scope.</strong> One transformer block, one simulator, no silicon. Integer-8 and block sizes other than 16 are untested against the stride-sensitive results; int8 halves every fragment, which should widen the gap, but that is a prediction. Prefill is out of scope, and the write-scatter cost of head-major would need measuring there. Every claim is a decode claim.</p>
+
+<div class="note"><p><b>On the printed peak bandwidth.</b> The simulator's startup line reports <code>DRAM Bandwidth 1638 GB/s</code>, which is a display artifact rather than a configuration error. <code>max_dram_bandwidth()</code> divides by the config field <code>dram_nbl</code>, set to 1 where a 32 B request at BL8 occupies 2 command clocks; with <code>dram_nbl: 2</code> the same line prints 819.2 GB/s, which is HBM3 at 16 channels &times; 2 pseudochannels &times; 32 bit &times; 6.4 Gbps. The field is used nowhere else, so simulated bandwidth is governed entirely by the Ramulator timings and no result here depends on the printed value.</p></div>
+
+
+</div>
+<div class="folio">11</div>
+</section>
+
+<!-- ================= PAGE 12 ================= -->
+<section class="sheet">
+<div class="runhead"><span>NPU-HBM Access-Pattern Analysis &middot; LLaMA Decode</span><span>&sect;9 Reproduction</span></div>
+<div class="body">
+
+<div class="part"><span class="pnum">Part III</span><span class="ptitle">Reproduction and next steps</span></div>
+
+<h2><span class="n">9</span>Reproduction</h2>
+
+<pre>docker build . -t onnxim
+./scripts/devshell.sh ./scripts/build_in_docker.sh          <b>build dir must be named build/</b>
+
+./scripts/devshell.sh bash -c '
+  cd /workspace/ONNXim/build &amp;&amp; \
+  ONNXIM_DRAM_TRACE=/workspace/ONNXim/out/run.csv ONNXIM_DRAM_TRACE_LIMIT=30000000 \
+  ONNXIM_WEIGHT_SWIZZLE=1 ONNXIM_KV_LAYOUT=head ONNXIM_KV_BLOCK=16 \
+  ./bin/Simulator --config ../configs/_c128.json \
+    --models_list ../example/v8m1024.json --mode language --trace_file v8m1024.csv'
+
+<b>trace format</b>  cycle,channel,pseudochannel,bankgroup,bank,row,column,address,rw,core
+              7,0,1,0,0,192,12,0x6004c00,R,0</pre>
+
+<p>Three traps. <code>--trace_file</code> is required and overwrites the models-list JSON field, so two runs differing only in that field produce identical results. The ONNXim JSON <code>dram_*</code> fields and the Ramulator2 YAML organisation must be kept in sync by hand: the trace decoder recomputes channel, bank and row from the raw address using the JSON, so a mismatch leaves the simulation correct and every decoded field wrong. And <code>cycle</code> is in the DRAM domain at 3200 MHz, not the 1 GHz core clock; divide by 3.2 to compare against the printed <code>Total cycle</code>.</p>
+
+<div class="tablewrap">
+<p class="tabcaption"><b>Table 10</b> Environment knobs. Behaviour is controlled by environment rather than config fields, so a sweep is a list of prefixes over one binary.</p>
+<table>
+<thead><tr><th>Variable</th><th>Values</th><th>Effect</th></tr></thead>
+<tbody>
+<tr><td class="k"><code>ONNXIM_KV_LAYOUT</code></td><td>head / block</td><td>the proposal vs the default</td></tr>
+<tr><td class="k"><code>ONNXIM_KV_BLOCK</code></td><td>tokens</td><td>paging granularity</td></tr>
+<tr><td class="k"><code>ONNXIM_KV_ALLOC</code></td><td>seq / shuffle</td><td>block-table allocation model</td></tr>
+<tr><td class="k"><code>ONNXIM_WEIGHT_SWIZZLE</code></td><td>0 / 1</td><td>row-major vs tile-major weights</td></tr>
+<tr><td class="k"><code>ONNXIM_INTRA_ORDER</code></td><td>seq / col / blk</td><td>intra-tile weight fetch order</td></tr>
+<tr><td class="k"><code>ONNXIM_PAR_STRATEGY</code></td><td>head / req / seq</td><td>work split across cores</td></tr>
+<tr><td class="k"><code>ONNXIM_DRAM_OCC</code></td><td>0 / 1</td><td>per-channel busy-cycle counters</td></tr>
+<tr class="rule"><td class="k"><code>RAMULATOR_REQBUF</code></td><td>entries</td><td>request-queue depth</td></tr>
+<tr><td class="k"><code>RAMULATOR_SCHED_ROWHIT</code></td><td>0 / 1</td><td>row-hit priority tier</td></tr>
+<tr><td class="k"><code>RAMULATOR_STARVE_CAP</code></td><td>cycles</td><td>starvation bound on that tier</td></tr>
+<tr><td class="k"><code>RAMULATOR_ACTBUF</code></td><td>entries</td><td>active (open-row) buffer size</td></tr>
+<tr><td class="k"><code>RAMULATOR_ROWTRACE</code></td><td>path</td><td>per-activation row trace</td></tr>
+</tbody>
+</table>
+</div>
+
+<p>For whole generations, <code>tops_visible.py --emit-compact DIR</code> then <code>replay_trace.py DIR --step N --layer L</code>, adding <code>--stamp</code> for arrival cycles. Analysis of a sweep directory is <code>analyze_sweep.py</code>.</p>
+
+</div>
+<div class="folio">12</div>
+</section>
+
+<!-- ================= PAGE 13 ================= -->
+<section class="sheet">
+<div class="runhead"><span>NPU-HBM Access-Pattern Analysis &middot; LLaMA Decode</span><span>&sect;10 HBM5 device model</span></div>
+<div class="body">
+
+<h2><span class="n">10</span>Next: an HBM5 device model in Ramulator2</h2>
+
+<p class="lede">Every effect in this report is a row-buffer and channel-striping effect, and both change with the device generation. That is the reason to build the model, and it also predicts what the model will show.</p>
+
+<p>Device models live in <code>extern/ramulator2/src/dram/impl/</code>, eleven of them today. <code>HBM3.cpp</code> is 427 lines and is the template. A model declares five things, of which two carry the work.</p>
+
+<div class="tablewrap">
+<p class="tabcaption"><b>Table 11</b> The parts of a Ramulator2 device model, with HBM3's values.</p>
+<table>
+<thead><tr><th>Part</th><th>HBM3</th><th>For HBM5</th></tr></thead>
+<tbody>
+<tr><td class="k">Registration macro</td><td><code>RAMULATOR_REGISTER_IMPLEMENTATION(IDRAM, HBM3, ...)</code></td><td>name only</td></tr>
+<tr><td class="k">Hierarchy <code>m_levels</code></td><td>channel, pseudochannel, bankgroup, bank, row, column</td><td>likely unchanged</td></tr>
+<tr><td class="k">Prefetch size</td><td><code>m_internal_prefetch_size = 2</code></td><td>candidate change</td></tr>
+<tr class="hi"><td class="k">Organisation presets</td><td><code>{density, DQ, {Ch, Pch, Bg, Ba, Ro, Co}}</code></td><td><strong>main change</strong></td></tr>
+<tr class="hi"><td class="k">Timing presets</td><td>26 values, one preset</td><td><strong>main change</strong></td></tr>
+</tbody>
+</table>
+</div>
+
+<pre>//   name     density   DQ    Ch Pch  Bg Ba   Ro     Co
+{"HBM3_8Gb",   {8&lt;&lt;10,  128,  {1, 2,  4,  4, 1&lt;&lt;15, 1&lt;&lt;6}}}
+
+timing: rate nBL nCL nRCDRD nRCDWR nRP nRAS nRC nWR nRTPS nRTPL nCWL nCCDS nCCDL
+        nRRDS nRRDL nWTRS nWTRL nRTW nFAW nRFC nRFCSB nREFI nREFISB nRREFD tCK_ps</pre>
+
+<h3>Steps</h3>
+
+<p><strong>1. Copy and register.</strong> <code>HBM3.cpp</code> to <code>HBM5.cpp</code>, rename the class, update the macro's three strings, add <code>impl/HBM5.cpp</code> to <code>extern/ramulator2/src/CMakeLists.txt</code> (HBM3 is line 18). Registration is self-contained, so the YAML can then say <code>impl: HBM5</code>.</p>
+
+<p><strong>2. Define the organisation.</strong> This sets the row size and therefore the striping threshold, which is the quantity every result here turns on. Row bytes are <code>columns &times; prefetch &times; (DQ / pseudochannels) / 8</code>, giving 1024 B in the present configuration, and the threshold is <code>channels &times; row_bytes</code>.</p>
+
+<div class="note"><p><b>The prediction to test first.</b> If HBM5 doubles the channel count, the contiguity threshold doubles from 16 KB to 32 KB and <em>block-major placement gets worse, not better</em>: a 4 KB fragment would cover an eighth of a row rather than a quarter. The layout penalty is not a fixed tax; it scales with channel count. Head-major placement, whose runs are already far above the threshold, should be unaffected.</p></div>
+
+<p><strong>3. Build the timing preset.</strong> Ramulator2 refuses to combine a timing preset with a <code>rate</code> override, so a full explicit timing set is the only way to model a data rate the presets do not cover. The method already used for HBM3 at 6.4 Gbps applies: hold the absolute nanosecond timings of a known preset constant and re-express them in cycles at the new clock, <code>ceil(t_ns &times; 1000 / tCK_ps)</code>. Two values must not be time-scaled because they are bus-structural rather than DRAM-core delays: <code>nBL</code>, the burst length in bus cycles, and <code>nCCDS</code>, which must cover the burst so that <code>nCCDS &ge; nBL</code>.</p>
+
+<p><strong>4. Mirror the organisation into the ONNXim JSON.</strong> <code>dram_channels</code>, <code>dram_pseudochannels</code>, <code>dram_bankgroups</code>, <code>dram_banks</code>, <code>dram_rows</code>, <code>dram_columns</code>, <code>dram_channel_width</code>, <code>dram_prefetch_size</code> and <code>dram_freq</code> must all match, or the trace decoder silently reports wrong banks and rows.</p>
+
+<p><strong>5. Re-validate and re-run.</strong> The analytical model parses geometry from the JSON and YAML rather than hardcoding it, so it should follow automatically, but <code>--validate</code> and <code>--verify-ranking</code> should be re-run before any conclusion is drawn. The minimum re-run set is the six-workload comparison, the GQA and mapper ablation, and the controller arms. The last is most likely to change, since the negative controller result rests on there being no timing-ready request during blocked cycles and different timings could alter that.</p>
+
+
+</div>
+<div class="folio">13</div>
+</section>

@@ -74,6 +74,7 @@ class DramRamulator : public Dram {
 class DramRamulator2 : public Dram {
  public:
   DramRamulator2(SimulationConfig config);
+  ~DramRamulator2() override;
 
   virtual bool running() override;
   virtual void cycle() override;
@@ -89,5 +90,38 @@ class DramRamulator2 : public Dram {
   int _tx_ch_log2;
   int _tx_log2;
   int _req_size;
+
+  /*
+   * Access trace. Enabled by the ONNXIM_DRAM_TRACE env var, which names the
+   * output CSV. ONNXIM_DRAM_TRACE_LIMIT caps the number of rows (0 = no cap).
+   */
+  void open_trace();
+  void log_access(uint32_t cid, addr_type ram_addr, MemoryAccess* request);
+
+  /*
+   * Occupancy: is the DRAM starved of work, or does it have a backlog it cannot
+   * drain fast enough? Counts requests handed to Ramulator2 but not yet
+   * returned, per channel, sampled every DRAM cycle.
+   */
+  std::vector<int64_t> _outstanding;
+  std::vector<uint64_t> _ch_busy_cycles;
+  std::vector<uint64_t> _ch_unserved_cycles;
+  uint64_t _sum_unserved = 0;
+  uint64_t _sum_returns = 0;
+  uint64_t _sum_outstanding = 0;
+  uint64_t _peak_outstanding = 0;
+
+  FILE* _trace_fp = nullptr;
+  FILE* _occ_fp = nullptr;
+  uint64_t _trace_limit = 0;
+  uint64_t _trace_rows = 0;
+  bool _trace_truncated = false;
+  /* Bit widths of each level, mirroring Ramulator2's LinearMapperBase::setup */
+  int _tx_offset_log2 = 0;
+  int _bits_pch = 0;
+  int _bits_bg = 0;
+  int _bits_ba = 0;
+  int _bits_ro = 0;
+  int _bits_co = 0;
 };
 #endif

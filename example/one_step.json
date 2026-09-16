@@ -1,0 +1,12 @@
+{
+  "models": [
+    {
+      "name": "opt-125m",
+      "trace_file": "one_step.csv",
+      "scheduler": "simple",
+      "scheduler_config": {
+        "max_batch_size": 1
+      }
+    }
+  ]
+}

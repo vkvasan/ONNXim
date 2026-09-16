@@ -1,0 +1,10 @@
+{
+  "models": [
+    {
+      "name": "opt-125m",
+      "trace_file": "prefill_1k.csv",
+      "scheduler": "simple",
+      "scheduler_config": { "max_batch_size": 1 }
+    }
+  ]
+}

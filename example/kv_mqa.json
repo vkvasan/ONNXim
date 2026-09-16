@@ -1,0 +1,12 @@
+{
+  "models": [
+    {
+      "name": "l2-mqa",
+      "trace_file": "llama_dec_16k.csv",
+      "scheduler": "simple",
+      "scheduler_config": {
+        "max_batch_size": 1
+      }
+    }
+  ]
+}

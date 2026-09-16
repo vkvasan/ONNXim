@@ -1,0 +1,12 @@
+{
+  "models": [
+    {
+      "name": "gqa4-1L",
+      "trace_file": "v32m4096.csv",
+      "scheduler": "simple",
+      "scheduler_config": {
+        "max_batch_size": 32
+      }
+    }
+  ]
+}

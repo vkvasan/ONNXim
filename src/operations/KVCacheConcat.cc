@@ -1,4 +1,5 @@
 #include "KVCacheConcat.h"
+#include <cstdlib>
 #include "../Model.h"
 // const scalar_t* __restrict__ q,       // [num_seqs, num_heads, head_size]
 // const cache_t* __restrict__ k_cache,  // [num_blocks, num_kv_heads,
@@ -67,19 +68,43 @@ void KVCacheConcat::initialize_tiles(MappingTable& mapping_table) {
     _model->get_tensor(value_tensor_id)->define_tensor(value_cache->get_address(), value_dims);
   }
   calculate_loops();
+  /* Stock ONNXim marks these tiles `skip`: Core::push_tile() retires a skip
+     tile without executing it, so the KV cache is NEVER written to DRAM and
+     the only writes a decode/prefill trace shows are activations.
+     ONNXIM_KV_WRITES=1 executes them (MOVIN of the QKV output, MOVOUT of the
+     query and of the new K/V rows), which is what vLLM's reshape_and_cache
+     kernel does. Needed to observe the stale-row overwrite (write-after-write)
+     of speculative decoding. Default stays stock so baselines are unchanged. */
+  const bool kv_writes = kv_writes_enabled();
   for(int outter = 0; outter < _outter_loops; outter++) {
     _tiles.push_back(std::make_unique<Tile>(Tile{.status = Tile::Status::INITIALIZED,
                       .optype = "KVCacheConcat",
                       .layer_id = _id,
-                      .skip = true}));
+                      .skip = !kv_writes}));
     initialize_instructions(_tiles.back().get(), outter);
   }
 }
 
+bool KVCacheConcat::kv_writes_enabled() {
+  static const bool e = [] {
+    const char* v = std::getenv("ONNXIM_KV_WRITES");
+    return v && v[0] == '1';
+  }();
+  return e;
+}
+
 void KVCacheConcat::calculate_loops() {
   uint32_t per_token_size = _config.precision * ( _cache_dim * 2 + _hidden_size);
-  _outter_loops =  ceil_div(get_input(0)->get_size() ,(_config.core_config[target_core].spad_size KB/ 2));
-  _inner_loops = ceil_div(_config.core_config[target_core].spad_size KB/2, per_token_size);
+  /* Stock sizes the chunk to half the scratchpad, which is fine for a tile
+     that is never executed. When the tiles DO run (ONNXIM_KV_WRITES=1) the
+     MOVIN must fit one scratchpad partition (spad / tile_depth), so use half
+     a partition; 128 requests x 24 KB of QKV output otherwise panics the
+     core ("MVIN issue panic"). Skip-tile counts stay as before. */
+  uint32_t chunk = kv_writes_enabled()
+      ? (_config.core_config[target_core].spad_size KB) / _config.tile_depth / 2
+      : (_config.core_config[target_core].spad_size KB) / 2;
+  _outter_loops =  ceil_div(get_input(0)->get_size(), chunk);
+  _inner_loops = ceil_div(chunk, per_token_size);
   spdlog::debug("[KVCacheConcat] number of tiles: {}", _outter_loops);
 }
 
@@ -94,7 +119,10 @@ void KVCacheConcat::initialize_instructions(Tile* tile, uint32_t idx) {
 
   int currenet_batch = 0;
   int current_index = 0;
-  for(int inner = 0; _inner_loops; inner++) {
+  /* FIX (upstream bug): the condition was `_inner_loops` (always true), so the
+     first tile staged EVERY token and its MOVIN exceeded the scratchpad as soon
+     as the tiles were executed with a real batch. */
+  for(int inner = 0; inner < (int)_inner_loops; inner++) {
     int token_id = idx * _inner_loops + inner;
     if(token_id >= get_input(0)->get_dims()[0]) {
       break;
@@ -107,21 +135,40 @@ void KVCacheConcat::initialize_instructions(Tile* tile, uint32_t idx) {
     for(addr_type offset = 0; offset < _hidden_size * _config.precision; offset += _config.dram_req_size) {
       query_out_address.insert(_config.align_address(query_out_addr + offset));
     }
-    auto key_cache_tensor = get_output(currenet_batch * 3 + 1);
-    addr_type key_out_address = key_cache_tensor->get_address() + key_cache_tensor->get_size() + 
+    /* Outputs are registered per batch as {query, key, value} -- LanguageModel.cc:245-247.
+       value_out_address used to derive from key_cache_tensor, so every V write landed on
+       the K cache's address and the V region was never written. Reads were always correct
+       (Attention.cc uses separate key/value bases), so this affected WRITE traffic only:
+       negligible in decode (1 token written per step) but material for prefill, which
+       writes N tokens of KV. */
+    /* FIX (upstream bugs), write placement only -- reads were never affected:
+       1. the batch advanced AFTER the address was formed, so the first token of
+          request b>0 was written into request b-1's cache;
+       2. the offset used the OUTPUT tensor's size, which already includes the
+          new tokens, so every write landed n_new rows past the end of the
+          cache instead of at the first free row. With speculative decoding
+          n_new = k+1 and the stale-row overwrite (write-after-write) is one of
+          the things being measured, so the rows must be the real ones. */
+    /* (batch, row) come from the GLOBAL token id, not a per-tile counter,
+       so the mapping also holds for the second and later tiles of a
+       multi-tile prefill. */
+    currenet_batch = 0;
+    current_index = token_id;
+    while(currenet_batch < _num_batches - 1 &&
+          current_index >= (int)_input_token_lengths[currenet_batch]) {
+      current_index -= _input_token_lengths[currenet_batch];
+      currenet_batch++;
+    }
+    auto key_cache_in = _model->get_tensor(_inputs[currenet_batch * 2 + 1]);
+    auto value_cache_in = _model->get_tensor(_inputs[currenet_batch * 2 + 2]);
+    addr_type key_out_address = key_cache_in->get_address() + key_cache_in->get_size() +
       current_index * _cache_dim * _config.precision;
-    addr_type value_out_address = key_cache_tensor->get_address() + key_cache_tensor->get_size() + 
+    addr_type value_out_address = value_cache_in->get_address() + value_cache_in->get_size() +
       current_index * _cache_dim * _config.precision;
     for(addr_type offset = 0; offset < _cache_dim * _config.precision; offset += _config.dram_req_size) {
       key_out_addresses[currenet_batch].insert(_config.align_address(key_out_address + offset));
       value_out_addresses[currenet_batch].insert(_config.align_address(value_out_address + offset));
     }
-
-    if(current_index >= _input_token_lengths[currenet_batch]) {
-      currenet_batch++;
-      current_index = 0;
-    }
-    current_index++;
   }
   
   tile->instructions.push_back(std::make_unique<Instruction>(Instruction{

@@ -1,4 +1,8 @@
 #include "Scheduler.h"
+
+/* Barrier-stall accounting (see DRAM_TRACING.md). */
+uint64_t Scheduler::s_bar_stall_calls = 0;
+uint64_t Scheduler::s_bar_crossed = 0;
 #include "../Simulator.h"
 
 std::unique_ptr<Scheduler> Scheduler::create(SimulationConfig config,
@@ -113,6 +117,12 @@ std::unique_ptr<Tile> Scheduler::get_tile(uint32_t core_id) {
       int layer_id = tile->layer_id;
       if (tile->status == Tile::Status::BAR) {
         LayerStat stat = _active_layers_map[layer_id];
+        if (stat.launched_tiles != stat.finished_tiles) {
+          /* Pipeline is still draining for this barrier. */
+          s_bar_stall_calls++;
+        } else {
+          s_bar_crossed++;
+        }
         if (stat.launched_tiles == stat.finished_tiles) {
           /* POP only if all lauched tiles are finished */
           _executable_tile_queue[partition_id].pop_front();

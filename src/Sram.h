@@ -29,10 +29,10 @@ class Sram {
 
   int _size;
   int _data_width;
-  int _current_size[2];
+  std::vector<int> _current_size;
   bool _accum;
 
   const cycle_type& _core_cycle;
 
-  robin_hood::unordered_map<addr_type, SramEntry> _cache_table[2];
+  std::vector<robin_hood::unordered_map<addr_type, SramEntry>> _cache_table;
 };

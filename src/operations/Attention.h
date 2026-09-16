@@ -1,5 +1,6 @@
 #pragma once
 //#include "../tensor/NPUTensor.h"
+#include <cstdlib>
 #include "Operation.h"
 #include "GemmWS.h"
 
@@ -38,7 +39,47 @@ class Attention : public Operation {
     /* For kv cache */
     bool onnx = false;
     bool has_kv_cache = false;
-    bool use_fused = true;
+    /* PagedAttention (vLLM-style) KV addressing.
+       Contiguous KV is one affine walk, so its DRAM addresses are statically
+       derivable. Paging stores KV in fixed-size blocks drawn from a pool and
+       reaches them through a block table, so the address sequence becomes
+       data-dependent -- the one access class no dense model can produce.
+         ONNXIM_KV_BLOCK  tokens per block (0/unset = contiguous, stock)
+         ONNXIM_KV_ALLOC  "shuffle" (default) or "seq" (identity, sanity check)
+       The table is a permutation WITHIN the already-allocated KV region, so
+       addresses stay in bounds; this models a fully-utilised pool. */
+    static uint32_t kv_block_tokens();
+    static const std::vector<uint32_t>& kv_block_table(uint32_t n_blocks);
+    addr_type kv_address(uint32_t head, uint32_t seq_idx, uint32_t d);
+    /* ONNXIM_KV_LAYOUT=headbank: head index placed on the DRAM bank bits */
+    static bool      kv_headbank_enabled();
+    static addr_type kv_headbank_chunk();
+    static uint32_t  kv_headbank_k();
+    static uint32_t  kv_headbank_nbanks();
+    static uint32_t  kv_tile_bank_stride();   /* ONNXIM_KV_TILE_BANK_STRIDE */
+    uint32_t         _kv_tile_len = 0;        /* (unused now) tokens per sub-chunk while building a tiled attention op */
+    uint32_t         _kv_tile_idx = 0;        /* tile->M of the M-tile being built; keys the tile-bank stride */
+    addr_type        kv_headbank_offset(uint32_t head, addr_type p, uint32_t tile = 0);
+    addr_type        kv_headbank_pad(addr_type base);
+    static addr_type kv_headbank_v_shift();
+    static addr_type act_lane(addr_type a);   /* ONNXIM_ACT_LANE: activation bank lane */
+    /* Shared block pool (ONNXIM_KV_POOL=1). ONNXim gives every request its own
+       KV tensor, so requests never interleave in DRAM -- unlike vLLM, where one
+       global pool serves all sequences and a churned free list leaves each
+       sequence's blocks scattered among its neighbours'. This rebases every
+       request into one common pool and hands out slots round-robin across
+       requests, so blocks from different sequences physically interleave. */
+    static bool  kv_pool_enabled();
+    static uint32_t kv_pool_ordinal(addr_type tensor_base, addr_type& pool_base);
+    addr_type kv_address_pooled(uint32_t head, uint32_t seq_idx, uint32_t d,
+                                addr_type tensor_base);
+
+    /* FlashAttention (online softmax, S never leaves the chip) vs the classic
+       path that materialises S = QK^T to DRAM and reads it back.
+       ONNXIM_NONFUSED=1 selects the non-fused path. At decode S is 1xS so the
+       two barely differ; at prefill S is SxS, so non-fused is the only workload
+       here that generates substantial WRITE traffic. */
+    bool use_fused = (std::getenv("ONNXIM_NONFUSED") == nullptr);
     bool need_scale = false;
 
     std::vector<uint32_t> _heads_per_tile;

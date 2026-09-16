@@ -1,0 +1,58 @@
+# LPDDR6 (JESD209-6) sub-channel at 10667 MT/s -- one Ramulator channel = one
+# 12-DQ sub-channel with 4 bank groups x 4 banks (JEDEC LPDDR6 Key Architecture
+# deck). Burst = BL24 x 12 DQ = 288 bits = 32 B data + 4 B meta, so a 32 B
+# ONNXim request occupies 24 beats = 12 CK; the LPDDR5X-derived model applies
+# a 2-burst-per-4xnBL32 interleave window, so nBL32 = 6 gives 12 CK per RD; payload bandwidth per
+# sub-channel = 32 B / (24 / 10667e6 s) -> 14.2 GB/s at 10667, 19.2 at 14400,
+# matching JEDEC's "28.5-38.4 GB/s per 24-bit channel".
+#
+# CORE TIMINGS ARE NOT PUBLIC. They are the LPDDR5X JEDEC-class values in ns,
+# held constant and re-expressed in cycles at this rate (tCK = 1E6/(10667/2) ps),
+# exactly the method used for HBM3_6.4Gbps.yaml. Self-consistent, suitable for
+# relative HBM3-vs-LPDDR6 comparison; do not cite as absolute LPDDR6 latency.
+# nCCD is set so same-bank-group CAS spacing (4 x nCCD) equals the burst,
+# like nCCDL = nBL in the HBM3 config, so a same-bank stream pays only the
+# data bus. Refresh timings come from the device's tRFC table (12 Gb row).
+Frontend:
+  impl: GEM5
+
+MemorySystem:
+  impl: GenericDRAM
+  clock_ratio: 1
+
+  DRAM:
+    impl: LPDDR6
+    org:
+      preset: LPDDR6_12Gb_x12
+      channel: 1
+    timing:
+      rate: 10667
+      nBL32: 6
+      tCL: 24.0
+      tRCDW: 18.0
+      tRCDR: 18.0
+      tRPab: 21.0
+      tRPpb: 18.0
+      tRAS: 42.0
+      tRC: 60.0
+      tWR: 34.0
+      tRTP: 7.5
+      tCWL: 12.0
+      nCCD: 3
+      tRRD: 3.75
+      tWTRS: 6.5
+      tWTRL: 12.0
+      tFAW: 15.0
+      nPPD: 2
+      nCS: 2
+
+  Controller:
+    impl: Generic
+    Scheduler:
+      impl: FRFCFS
+    RefreshManager:
+      impl: AllBank
+    plugins:
+
+  AddrMapper:
+    impl: RoBaRaCoCh

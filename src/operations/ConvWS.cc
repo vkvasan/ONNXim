@@ -472,8 +472,8 @@ void ConvWS::initialize_instructions(Tile* tile, Mapping mapping) {
   spdlog::trace("Layer {} Sram allocation size {} B act {} B weight {} B", _name,
                 sram_allocation * _config.dram_req_size, act_allocation* _config.dram_req_size,
                 (sram_allocation - act_allocation)* _config.dram_req_size);
-  assert(sram_allocation * _config.dram_req_size <= _config.core_config[target_core].spad_size KB / 2);
-  assert(act_allocation * _config.dram_req_size <= _config.core_config[target_core].spad_size KB / 2);
+  assert(sram_allocation * _config.dram_req_size <= _config.core_config[target_core].spad_size KB / _config.tile_depth);
+  assert(act_allocation * _config.dram_req_size <= _config.core_config[target_core].spad_size KB / _config.tile_depth);
 }
 
 void ConvWS::initialize_matmul_instructions(Tile* tile) {

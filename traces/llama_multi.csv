@@ -1,0 +1,5 @@
+time, prompt_length, target_length, cached_length
+0, 1, 1, 1023
+0, 1, 1, 2047
+0, 1, 1, 4095
+0, 1, 1, 8191

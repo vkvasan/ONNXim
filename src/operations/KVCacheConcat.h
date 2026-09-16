@@ -11,7 +11,8 @@ class KVCacheConcat : public Operation {
                   std::map<std::string, std::string>& attributes, uint32_t target_core=0);
     void initialize_tiles(MappingTable& mapping_table) override;
   private:
-    void calculate_loops();
+      static bool kv_writes_enabled();
+void calculate_loops();
     void initialize_instructions(Tile* tile, uint32_t idx);
 
     uint32_t _num_batches;

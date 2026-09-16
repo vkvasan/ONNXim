@@ -1,0 +1,19 @@
+{
+  "models": [
+    {
+      "name": "opt-125m",
+      "trace_file": "sd_smoke2.csv",
+      "scheduler": "specdec",
+      "scheduler_config": {
+        "max_batch_size": 128,
+        "spec_k": 2,
+        "spec_alpha": 0.8,
+        "spec_seed": 3,
+        "scorer": "mqa",
+        "spec_disable_batch": 0,
+        "draft_model": "llama-68m",
+        "accept_file": "traces/sd_smoke2.accept"
+      }
+    }
+  ]
+}

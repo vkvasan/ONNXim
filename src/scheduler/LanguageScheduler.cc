@@ -1,12 +1,26 @@
 #include "LanguageScheduler.h"
 #include "IterLevelScheduler.h"
+#include "SpecDecScheduler.h"
 #include <fstream>
 
 std::unique_ptr<LangScheduler> LangScheduler::create(std::string name, std::string path, 
                                                       std::unique_ptr<LanguageModel> model,
                                                       SimulationConfig config,
                                                       json info) {
-  if(info["scheduler"] == "simple") {
+  return create(name, path, std::move(model), nullptr, config, info);
+}
+
+std::unique_ptr<LangScheduler> LangScheduler::create(std::string name, std::string path, 
+                                                      std::unique_ptr<LanguageModel> model,
+                                                      std::unique_ptr<LanguageModel> draft,
+                                                      SimulationConfig config,
+                                                      json info) {
+  if(info["scheduler"] == "specdec") {
+    spdlog::info("Speculative-decoding Language scheduler selected");
+    return std::make_unique<SpecDecScheduler>(name, path, std::move(model), std::move(draft),
+                                              config, info["scheduler_config"]);
+  }
+  else if(info["scheduler"] == "simple") {
     spdlog::info("Simple Language scheduler selected");
     return std::make_unique<LangScheduler>(name, path, std::move(model), config, info["scheduler_config"]);
   }

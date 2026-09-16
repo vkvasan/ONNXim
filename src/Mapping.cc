@@ -52,8 +52,8 @@ MappingTable MappingTable::parse_mapping_file(
 void MappingTable::gemm_mapping(Mapping::LoopCounts &key) {
   uint32_t dim_I, dim_J, dim_K;
   uint32_t dim = _config.core_config[key.target_core].core_height;
-  uint32_t max_spad_rows = (_config.core_config[key.target_core].spad_size KB) / (dim * _config.precision * 2);
-  uint32_t max_acc_rows = (_config.core_config[key.target_core].accum_spad_size KB) / (dim * 4 * 2);
+  uint32_t max_spad_rows = (_config.core_config[key.target_core].spad_size KB) / (dim * _config.precision * _config.tile_depth);
+  uint32_t max_acc_rows = (_config.core_config[key.target_core].accum_spad_size KB) / (dim * 4 * _config.tile_depth);
 
   assert(_config.core_config[key.target_core].core_height==_config.core_config[key.target_core].core_width);
   dim_I = key.N;
@@ -397,8 +397,8 @@ Mapping MappingTable::calc_conv_mapping(Mapping::LoopCounts &key) {
   bool trans_input_3120, trans_weight_0132;
   int pool_size, pool_stride, pool_padding;
   uint32_t dim = _config.core_config[key.target_core].core_height;
-  uint32_t max_spad_rows = (_config.core_config[key.target_core].spad_size KB) / (dim * _config.precision * 2);
-  uint32_t max_acc_rows = (_config.core_config[key.target_core].accum_spad_size KB) / (dim * 4 * 2);
+  uint32_t max_spad_rows = (_config.core_config[key.target_core].spad_size KB) / (dim * _config.precision * _config.tile_depth);
+  uint32_t max_acc_rows = (_config.core_config[key.target_core].accum_spad_size KB) / (dim * 4 * _config.tile_depth);
 
   batch_size = 1;
   out_channels = key.M;
@@ -522,7 +522,7 @@ Mapping MappingTable::calc_conv_mapping(Mapping::LoopCounts &key) {
       // B * O_row * O_col * O_ch
       int input_tile_size = args[0] * (args[1]+2*padding) * (args[2]+2*padding) * args[6] * _config.precision;
 			if (spad_rows <= max_spad_rows && acc_rows <= max_acc_rows &&
-        ((input_tile_size + weight_tile_size) * 3 >> 1) <= (_config.core_config[key.target_core].spad_size KB / 2)) {
+        ((input_tile_size + weight_tile_size) * 3 >> 1) <= (_config.core_config[key.target_core].spad_size KB / _config.tile_depth)) {
 				args[i] = args_candidate[i];
 				nothing_increased = false;
 			}

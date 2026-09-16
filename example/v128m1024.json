@@ -1,0 +1,12 @@
+{
+  "models": [
+    {
+      "name": "llama2-7b-1L",
+      "trace_file": "v128m1024.csv",
+      "scheduler": "simple",
+      "scheduler_config": {
+        "max_batch_size": 128
+      }
+    }
+  ]
+}

@@ -15,6 +15,9 @@ class Tensor {
   void define_tensor(addr_type address, std::vector<uint32_t> &dims);
   void redefine_tensor(uint32_t src_node, std::vector<uint32_t> &dims);
   void resize_tensor(std::vector<uint32_t> &dims);
+  /* A copy keeps the source's id, so two views of one cache would collide in
+     a model's tensor map. Give this copy its own id (same address, own dims). */
+  void reassign_id() { _id = generate_id(); }
   void add_child_node(Operation *op);
 
   uint32_t get_id() { return _id; }

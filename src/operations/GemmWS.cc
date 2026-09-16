@@ -1,3 +1,4 @@
+#include <unordered_set>
 #include "GemmWS.h"
 
 #include "../Model.h"
@@ -139,28 +140,66 @@ void GemmWS::initialize_instructions(Tile* tile, Mapping mapping) {
       addr_type weight_sp_addr =
             weight_sp_base_addr +
             (Ms * mapping.tile_in_loop.C + Cs) * _config.precision;
-      std::set<addr_type> weight_set;
-      for (int iter_m = 0; iter_m < m_loop; iter_m+=1) {
-        for (int iter_c = 0; iter_c < c_in_loop; iter_c+=elems_per_access) {
-          int C = C_offset + iter_c;
-          int M = M_offset + iter_m;
-          std::vector<uint32_t> weight_shape_2d;
-          std::vector<uint32_t> index;
-          weight_shape_2d.resize(2);
-          index.resize(2);
+      /* INTRA-TILE TRAVERSAL ORDER (ONNXIM_INTRA_ORDER=seq|col|blk).
+       *
+       * Two things pin the order today. The loop nest is M-outer/C-inner, and
+       * the addresses then pass through a std::set, which SORTS them -- so the
+       * emitted order is ascending no matter what the loop does. Varying this
+       * axis therefore needs both a loop permutation AND a way past the sort.
+       *
+       * This is the one controller-VISIBLE axis (32-256 B, well inside the
+       * ~8 KB per-stream window) that no run had ever varied. seq reproduces
+       * the stock path bit-for-bit, including the std::set, so the default is
+       * unchanged.
+       */
+      std::vector<addr_type> weight_vec;
+      {
+        auto emit = [&](int M, int C) {
+          std::vector<uint32_t> weight_shape_2d(2), index(2);
           weight_shape_2d[1] = _weight_shape[Cdim_w];
-          weight_shape_2d[0] = _weight_shape[Mdim]; 
+          weight_shape_2d[0] = _weight_shape[Mdim];
           index[1] = C;
           index[0] = M;
-          weight_set.insert(
-              second_addr + make_address(index, weight_shape_2d));
+          /* weight_tilebank_pad: 0 unless ONNXIM_WEIGHT_TILEBANK is set */
+          return second_addr + weight_tilebank_pad(second_addr) + (weight_swizzle_enabled()
+              ? make_address_tiled(index, weight_shape_2d,
+                                   mapping.tile_in_loop.M, mapping.tile_in_loop.C)
+              : make_address(index, weight_shape_2d));
+        };
+        const int order = intra_tile_order();
+        if (order == 0) {                       // seq: stock path, sorted
+          std::set<addr_type> weight_set;
+          for (int iter_m = 0; iter_m < m_loop; iter_m += 1)
+            for (int iter_c = 0; iter_c < c_in_loop; iter_c += elems_per_access)
+              weight_set.insert(emit(M_offset + iter_m, C_offset + iter_c));
+          weight_vec.assign(weight_set.begin(), weight_set.end());
+        } else {
+          std::unordered_set<addr_type> seen;   // dedup WITHOUT reordering
+          auto push = [&](int M, int C) {
+            addr_type a = emit(M, C);
+            if (seen.insert(a).second) weight_vec.push_back(a);
+          };
+          if (order == 1) {                     // col: C outer, M inner
+            for (int iter_c = 0; iter_c < c_in_loop; iter_c += elems_per_access)
+              for (int iter_m = 0; iter_m < m_loop; iter_m += 1)
+                push(M_offset + iter_m, C_offset + iter_c);
+          } else {                              // blk: 32x32 sub-blocks
+            const int B = 32;
+            for (int m0 = 0; m0 < m_loop; m0 += B)
+              for (int c0 = 0; c0 < c_in_loop; c0 += B * elems_per_access)
+                for (int iter_m = m0; iter_m < std::min(m0 + B, m_loop); iter_m += 1)
+                  for (int iter_c = c0;
+                       iter_c < std::min(c0 + B * elems_per_access, c_in_loop);
+                       iter_c += elems_per_access)
+                    push(M_offset + iter_m, C_offset + iter_c);
+          }
         }
       }
       tile->instructions.push_back(std::make_unique<Instruction>(Instruction{
           .opcode = Opcode::MOVIN,
           .dest_addr = weight_sp_addr,
-          .size = (uint32_t)weight_set.size(),
-          .src_addrs = std::vector<addr_type>(weight_set.begin(), weight_set.end()),
+          .size = (uint32_t)weight_vec.size(),
+          .src_addrs = weight_vec,
           .operand_id = _INPUT_OPERAND + 1,
           .tile_m = mapping.tile_in_loop.M,
           .tile_k = mapping.tile_in_loop.C}));

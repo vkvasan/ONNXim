@@ -55,6 +55,33 @@ struct SimulationConfig {
   uint32_t dram_print_interval;
   std::string dram_config_path;
 
+  /*
+   * DRAM organization, used only to decode (pseudochannel, bankgroup, bank,
+   * row, column) for the access trace. These must match the org of the
+   * Ramulator2 spec in dram_config_path; the defaults below are the shared
+   * org of the HBM2_8Gb and HBM3_8Gb presets.
+   */
+  uint32_t dram_pseudochannels = 2;
+  uint32_t dram_bankgroups = 4;
+  uint32_t dram_banks = 4;  // banks per bankgroup
+  uint32_t dram_rows = 1 << 15;
+  uint32_t dram_columns = 1 << 6;
+  uint32_t dram_prefetch_size = 2;  // m_internal_prefetch_size
+  /*
+   * Ramulator2's org.channel_width, which defaults to 64 in both the HBM2 and
+   * HBM3 specs. This is NOT org.dq (128); the transaction size that sets the
+   * address offset is prefetch_size * channel_width / 8 = 16 B.
+   */
+  uint32_t dram_channel_width = 64;
+
+  /*
+   * Number of tile slots / scratchpad banks. 2 = stock double buffering.
+   * Deeper lets more tiles be resident so an independent tile's loads can
+   * cover another tile's compute -- but each bank is spad_size/tile_depth,
+   * so tiles get correspondingly smaller.
+   */
+  uint32_t tile_depth = 2;
+
   /* ICNT config */
   IcntType icnt_type;
   uint32_t icnt_injection_ports_per_core = 1;

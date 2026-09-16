@@ -1,0 +1,36 @@
+# HBM3, using the HBM3_2Gbps timing preset bundled with Ramulator2.
+#
+# WARNING: this preset is the ONLY HBM3 timing set shipped in
+# extern/ramulator2/src/dram/impl/HBM3.cpp, and its own source comment reads
+# "TODO: Find more sources on HBM3 timings...". At 2.0 Gbps/pin it is SLOWER
+# than the HBM2_2.5Gbps preset used by the stock tpuv4 config, and its nBL is 4
+# vs HBM2's 2. Swapping to this file alone will therefore *reduce* memory
+# bandwidth. Use HBM3_6.4Gbps.yaml for a realistic HBM3 data rate.
+#
+# Pair this file with "dram_freq": 1000 in the ONNXim JSON config
+# (tCK = 1000 ps -> 1000 MHz command clock).
+Frontend:
+  impl: GEM5
+
+MemorySystem:
+  impl: GenericDRAM
+  clock_ratio: 1
+
+  DRAM:
+    impl: HBM3
+    org:
+      preset: HBM3_8Gb
+      channel: 1
+    timing:
+      preset: HBM3_2Gbps
+
+  Controller:
+    impl: Generic
+    Scheduler:
+      impl: FRFCFS
+    RefreshManager:
+      impl: AllBank
+    plugins:
+
+  AddrMapper:
+    impl: RoBaRaCoCh

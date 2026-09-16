@@ -44,6 +44,12 @@ typedef struct {
   cycle_type dram_enter_cycle;
   cycle_type dram_finish_cycle;
   int buffer_id;
+  /* Which resident tile issued this load (see Core's load-ahead gate). */
+  uint64_t load_epoch = 0;
+  /* Instruction::operand_id of the MOVIN that produced it (0 = untagged);
+     written into the DRAM access trace so a row visit can be attributed to
+     a tensor (Q/K/V/weight) instead of inferred from its address. */
+  uint32_t operand = 0;
 } MemoryAccess;
 
 enum class Opcode {
@@ -91,6 +97,9 @@ typedef struct {
   bool src_from_accum = false;
   bool zero_init = false;
   bool last_inst = false;
+  /* Set by Core::cycle() for every instruction; identifies the owning tile's
+     loads for the load-ahead gate. my_tile is only valid on the last inst. */
+  uint64_t load_epoch = 0;
   Tile* my_tile;
   std::string to_string();
 } Instruction;
@@ -123,6 +132,8 @@ struct Tile {
   int accum_spad_id;
   int core_id = -1;
   bool inst_finished = false;
+  /* Assigned by Core::issue(); identifies this tile's loads. */
+  uint64_t load_epoch = 0;
 } ;
 
 uint32_t generate_id();

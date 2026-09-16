@@ -21,6 +21,9 @@ class Scheduler {
     virtual void finish_tile(uint32_t core_id, int layer_id);
     virtual bool empty();
     virtual bool tile_queue_empty();
+    /* How often did a barrier block tile issue while the pipeline drained? */
+    static uint64_t s_bar_stall_calls;
+    static uint64_t s_bar_crossed;
   protected:
     typedef struct {
       uint32_t id;
