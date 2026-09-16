@@ -98,12 +98,6 @@ A run takes ~3 hours. `./run.sh --help` lists the options.
 and why. [`TRACES.md`](TRACES.md) covers trace generation in detail,
 [`SETUP.md`](SETUP.md) the build, [`SPECDEC.md`](SPECDEC.md) speculative decoding.
 
-This is a fork of [ONNXim](https://github.com/PSAL-POSTECH/ONNXim) (MIT) with
-[Ramulator2](https://github.com/vkvasan/ramulator2) instrumented for per-stream
-row-buffer statistics. Upstream README follows.
-
----
-
 # ONNXim: A Fast, Cycle-level Multi-core NPU Simulator
 [![Docker Image CI](https://github.com/PSAL-POSTECH/ONNXim/actions/workflows/docker-image.yml/badge.svg)](https://github.com/PSAL-POSTECH/ONNXim/actions/workflows/docker-image.yml)
 

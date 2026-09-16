@@ -11,3 +11,4 @@ traces/flat/
 traces/compact/
 traces/azure/
 *.csv.gz
+scripts/run_ko2.sh
