@@ -1,3 +1,58 @@
+# LLaMA-2 7B DRAM traces on a simulated NPU
+
+Clone, run one command, get a cycle-stamped DRAM address trace of LLaMA-2 7B decode.
+
+```bash
+git clone --recursive https://github.com/vkvasan/ONNXim.git
+cd ONNXim
+./run.sh
+```
+
+That is all. The first run builds a Docker image and the simulator (~30 min once),
+then simulates 128 real serving requests and writes:
+
+```
+out/az128_headbank_pg64_k1.csv     the DRAM trace
+out/az128_headbank_pg64_k1.log     row-buffer statistics
+```
+
+Trace format, one line per 32 B DRAM request in arrival order at the controller:
+
+```
+cycle,channel,pseudochannel,bankgroup,bank,row,column,address,rw,core,operand
+7,0,1,0,0,192,12,0x6004c00,R,0,102
+```
+
+`operand` separates the streams: 100 = Q, 101 = K, 102 = V, >=200 = outputs, 0 = KV writes.
+
+### Comparing KV cache layouts
+
+```bash
+./run.sh --layout block     # paged block-major, the vLLM default
+./run.sh --layout head      # head-major
+./run.sh                    # head-to-bank placement (default)
+```
+
+Measured on 128 Azure requests, 4 x 128x128 NPU, HBM3:
+
+| layout | KV row hit | row activations | cycles |
+|---|---|---|---|
+| block-major, 16-token pages | 79.3% | 1,326,887 | 24.19M |
+| block-major, 64-token pages | 89.5% | 673,062 | 20.84M |
+| head-to-bank, 64-token pages | **93.5%** | **416,657** | 21.46M |
+
+A run takes ~3 hours. `./run.sh --help` lists the options.
+
+**Documentation.** [`KV_PLACEMENT.md`](KV_PLACEMENT.md) is the writeup: what was measured
+and why. [`TRACES.md`](TRACES.md) covers trace generation in detail,
+[`SETUP.md`](SETUP.md) the build, [`SPECDEC.md`](SPECDEC.md) speculative decoding.
+
+This is a fork of [ONNXim](https://github.com/PSAL-POSTECH/ONNXim) (MIT) with
+[Ramulator2](https://github.com/vkvasan/ramulator2) instrumented for per-stream
+row-buffer statistics. Upstream README follows.
+
+---
+
 # ONNXim: A Fast, Cycle-level Multi-core NPU Simulator
 [![Docker Image CI](https://github.com/PSAL-POSTECH/ONNXim/actions/workflows/docker-image.yml/badge.svg)](https://github.com/PSAL-POSTECH/ONNXim/actions/workflows/docker-image.yml)
 
